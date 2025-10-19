@@ -7,6 +7,20 @@ typedef struct Vec2
   int y; 
 } Vec2;
 
+typedef struct Rec
+{
+  Vec2 coord;
+  int width;
+  int height;
+}Rec;
+
+typedef struct Vec2_Rec 
+{
+  unsigned int cap;
+  unsigned int size;
+  Rec* items;
+} Vec2_Rec;
+
 typedef struct Vec2_Arr 
 {
   unsigned int cap;
@@ -14,13 +28,14 @@ typedef struct Vec2_Arr
   Vec2* items;
 } Vec2_Arr;
 
-extern int abs(int);
-extern int is_Vec2_equal(Vec2 v0, Vec2 v1);
-extern int bresenham_line(Vec2 pFrom, Vec2 pTo, Vec2_Arr* array);
+extern int rg_abs(int);
+extern int rg_is_Vec2_equal(Vec2 v0, Vec2 v1);
+extern int rg_bresenham_line(Vec2 pFrom, Vec2 pTo, Vec2_Arr* array);
+extern void rg_reverse_arr(Vec2_Arr* arr);
 
 #ifdef ROGUE_H_IMPLEMENTATION
 
-int abs(int a) 
+int rg_abs(int a) 
 {
   if (a < 0) {
     return -1*a;
@@ -28,14 +43,14 @@ int abs(int a)
   return a;
 }
 
-int is_Vec2_equal(Vec2 v0, Vec2 v1) 
+int rg_is_Vec2_equal(Vec2 v0, Vec2 v1) 
 {
   if(v0.x == v1.x && v0.y == v1.y)
     return 1;
   return 0;
 }
 
-void reverse_arr(Vec2_Arr* arr)
+void rg_reverse_arr(Vec2_Arr* arr)
 {
   for(int i = 0, j = arr->size - 1; i < j; i++, j--){
     Vec2 temp;
@@ -48,17 +63,17 @@ void reverse_arr(Vec2_Arr* arr)
   }
 }
 
-int bresenham_line(Vec2 pFrom, Vec2 pTo, Vec2_Arr* array)
+int rg_bresenham_line(Vec2 pFrom, Vec2 pTo, Vec2_Arr* array)
 {
   // the return shows if it succeded or not
   // resource that helped most of the code here https://www.youtube.com/watch?v=CceepU1vIKo
 
   array->size = 0;
   int is_reversed = 0;
-  if(is_Vec2_equal(pFrom, pTo)){
+  if(rg_is_Vec2_equal(pFrom, pTo)){
     return 0;
   }
-  if(abs(pTo.y - pFrom.y) < abs(pTo.x - pFrom.x)){
+  if(rg_abs(pTo.y - pFrom.y) < rg_abs(pTo.x - pFrom.x)){
     // x moves more than y, draw horizontal
     if (pFrom.x > pTo.x ){
       // if going left (negative), mirror
@@ -131,7 +146,7 @@ int bresenham_line(Vec2 pFrom, Vec2 pTo, Vec2_Arr* array)
     }
   }
   if(is_reversed){
-    reverse_arr(array);
+    rg_reverse_arr(array);
   }
   // success
   return 1;
