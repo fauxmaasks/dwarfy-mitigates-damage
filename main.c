@@ -12,17 +12,12 @@
 #define GRID_HEIGHT 900
 #define X_OFFSET 100
 #define Y_OFFSET 20
-#define COLS 60
-#define ROWS 60
+#define COLS 10
+#define ROWS 10
 
-// MAP is gonna have a bunch of info?
-// creature ID from the list of creatures ocuping the spot
-// corpse ID, lying on the ground
-// 
-// terrain ID - floor, wall, rocks
+#define NORMAL_MODE 0
+#define TARGETING_MODE 1
 
-// so map could be array of structs
-//
 typedef unsigned int uint;
 
 typedef struct Tile {
@@ -61,11 +56,13 @@ typedef struct Entity_arr {
   Entity* items;
 }Entity_arr;
 
+uint mode = NORMAL_MODE;
 
 uint coord_to_idx(Vec2 c)
 {
   return c.y*COLS + c.x;
 }
+
 
 bool is_inside_bounds(Map map, Vec2 new_coord) 
 {
@@ -97,13 +94,13 @@ void make_quadrants(Vec2** qs, int* size, Map map, int x_splits, int y_splits)
 void map_generator_random(Map* map)
 {
   srand(time(NULL));
-  int pillar_min_size = 2;
-  int pillar_max_size = 3;
+  int pillar_min_size = 1;
+  int pillar_max_size = 1;
 
   Vec2* qs;
   int size;
-  int x_split = 8;
-  int y_split = 8;
+  int x_split = 2;
+  int y_split = 2;
   int q_width = map->width/x_split;
   int q_height = map->height/y_split;
   make_quadrants(&qs, &size, *map, x_split, y_split);
@@ -157,11 +154,73 @@ bool move(Map* map, Vec2* entity_coord, int dir_x, int dir_y)
   return false;
 }
 
+void swap_in_sequence(Map* map, Vec2 origin_coord, Vec2* sequence, int size){
+  Tile t1 = {0}; 
+  Tile t2 = {0}; 
+  bool is_first_pass = true;
+  for(int i = 0; i <= size; i++){
+    Vec2 current_coord = {origin_coord.x + sequence[i%size].x, origin_coord.y + sequence[i%size].y};
+    if(is_first_pass){
+      t1.terrain_id = map->cells[coord_to_idx(current_coord)].entity_idx;
+      t1.item_idx   = map->cells[coord_to_idx(current_coord)].item_idx;
+      t1.terrain_id = map->cells[coord_to_idx(current_coord)].terrain_id;
+      is_first_pass = false;
+    } else {
+      t2.terrain_id = map->cells[coord_to_idx(current_coord)].entity_idx;
+      t2.item_idx   = map->cells[coord_to_idx(current_coord)].item_idx;
+      t2.terrain_id = map->cells[coord_to_idx(current_coord)].terrain_id;
+      map->cells[coord_to_idx(current_coord)].entity_idx = t1.entity_idx;
+      map->cells[coord_to_idx(current_coord)].item_idx   = t1.item_idx;
+      map->cells[coord_to_idx(current_coord)].terrain_id = t1.terrain_id;
+      t1.terrain_id = t2.entity_idx;
+      t1.item_idx   = t2.item_idx;
+      t1.terrain_id = t2.terrain_id;
+    }
+  }
+}
+bool rotate_terrain(Map* map, Vec2 origin_coord, Vec2 rotation_dir)
+{
+  // for now size is fixed 2x2, 3x3 is interesting too
+  int size = 3;
+  int x_dir = origin_coord.x < rotation_dir.x ? 1 : -1;
+  // int y_dir = origin_coord.y < rotation_dir.y ? -1 : 1;
+
+  bool is_clockwise = x_dir == 1;
+
+  if(origin_coord.x > (COLS - size) || origin_coord.y > (ROWS - size)){
+    return false;
+  }
+  if(size == 2){
+    static const int seq_size = 4;
+    if(is_clockwise){
+      Vec2 sequence[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+      swap_in_sequence(map, origin_coord, sequence, seq_size);
+    } else {
+      Vec2 sequence[4] = {{0, 0}, {0, 1}, {1, 1}, {1, 0}};
+      swap_in_sequence(map, origin_coord, sequence, seq_size);
+    }
+  } else if(size == 3){
+      const int seq_size = 8;
+      if(is_clockwise){
+        Vec2 sequence[8] = {{0, 0}, {1, 0}, {2, 0}, {2, 1}, {2, 2}, {1, 2}, {0, 2}, {0, 1}};
+        swap_in_sequence(map, origin_coord, sequence, seq_size);
+      } else {
+        Vec2 sequence[8] = {{0, 0}, {0, 1}, {0, 2}, {1, 2}, {2, 2}, {2, 1}, {2, 0}, {1, 0}};
+        swap_in_sequence(map, origin_coord, sequence, seq_size);
+      }
+  }
+  return true;
+}
+
 bool move_terrain(Map* map, Vec2 origin_coord, Vec2 target_coord) 
 {
-  Vec2_Arr tiles = {0};
-  rg_bresenham_line(origin_coord, target_coord, &tiles);
+  printf("moving terrain: from(%d,%d) to(%d,%d)\n", origin_coord.x, origin_coord.y, target_coord.x, target_coord.y);
+  // Vec2_Arr tiles = {0};
+  // tiles.cap = 100;
+  // tiles.items = (Vec2*)malloc(sizeof(
+  // rg_bresenham_line(origin_coord, target_coord, &tiles);
   if(is_inside_bounds(*map, target_coord) && is_valid_to_move(*map, target_coord)) {
+
     map->cells[coord_to_idx(target_coord)].terrain_id = map->cells[coord_to_idx(origin_coord)].terrain_id;
     map->cells[coord_to_idx(origin_coord)].terrain_id = 0;
     origin_coord.x = target_coord.x;
@@ -170,13 +229,51 @@ bool move_terrain(Map* map, Vec2 origin_coord, Vec2 target_coord)
   }
   return false;
 }
-int handle_input(int key, Map* map, Vec2* player_coord) 
+
+bool is_mouse_inside_grid(Vector2 mouse_coord) 
 {
+  return mouse_coord.x > X_OFFSET && 
+         mouse_coord.x < GRID_WIDTH + X_OFFSET &&
+         mouse_coord.y > Y_OFFSET && 
+         mouse_coord.y < GRID_HEIGHT + Y_OFFSET;
+
+}
+
+Vec2 get_tile_coord_under_pixel_coord(Vector2 pixel_coord)
+{
+  float cell_width = (float)GRID_WIDTH/(float)COLS;
+  float cell_height = (float)GRID_HEIGHT/(float)ROWS;
+  float x_on_grid = (int)((pixel_coord.x - X_OFFSET)/cell_width);
+  float y_on_grid = (int)((pixel_coord.y - Y_OFFSET)/cell_height);
+  return (Vec2){.x=x_on_grid, .y=y_on_grid};
+}
+
+void tile_clicked(Map map, Vec2_Arr* targets)
+{
+  if(targets->size == 2) {
+    //reset
+    targets->size = 0;
+  }
+
+  Vector2 mouse_coord = GetMousePosition();
+  if(!is_mouse_inside_grid(mouse_coord)){return;}
+  Vec2 coord = get_tile_coord_under_pixel_coord(mouse_coord);
+  targets->items[targets->size].x = coord.x;
+  targets->items[targets->size].y = coord.y;
+  targets->size++;
+  printf("selecting: (%d, %d)\n", coord.x, coord.y);
+}
+
+int handle_input(int key, Map* map, Vec2* player_coord, Vec2_Arr* targets) 
+{
+    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) tile_clicked(*map, targets);
     if (IsKeyPressed(KEY_UP)) move(map, player_coord, 0, -1);
     if (IsKeyPressed(KEY_DOWN)) move(map, player_coord, 0, 1);
     if (IsKeyPressed(KEY_LEFT)) move(map, player_coord, -1, 0);
     if (IsKeyPressed(KEY_RIGHT)) move(map, player_coord, 1, 0);
-    if (IsKeyPressed(KEY_R))
+    if (IsKeyPressed(KEY_F) && targets->size == 2) move_terrain(map, targets->items[0], targets->items[1]);
+    if (IsKeyPressed(KEY_R) && targets->size == 2) rotate_terrain(map, targets->items[0], targets->items[1]);
+    if (IsKeyPressed(KEY_N))
     {
       init_map(map, map->width, map->height); 
       map_generator_random(map);
@@ -238,10 +335,13 @@ int main()
   UnloadImage(monster_img);
 
   SetTargetFPS(30);
+  Vec2_Arr targets = {0};
+  targets.cap = 2;
+  targets.items = (Vec2*)malloc(sizeof(Vec2)*2);
   while(!WindowShouldClose()){
 
     int key = GetKeyPressed();
-    handle_input(key, &map, &player_coord);
+    handle_input(key, &map, &player_coord, &targets);
     Vector2 mouse_pos = GetMousePosition();
 
     BeginDrawing();
