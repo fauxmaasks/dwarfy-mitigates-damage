@@ -150,8 +150,12 @@ void dig_rectangle(Map* map, int  origin_x, int origin_y, int width, int height)
 void dig_room(Map* map, int size, Vec2 c, Vec2 dir)
 {
     Vec2 door_coord = (Vec2){c.x + dir.x, c.y + dir.y};
-    if(is_inside_bounds(*map, door_coord)){
+    do {
+      door_coord.x += dir.x; 
+      door_coord.y += dir.y; 
+    } while(is_inside_bounds(*map,  door_coord) && map->cells[coord_to_idx(door_coord)].terrain_id == FLOOR_ID);
 
+    if(is_inside_bounds(*map, door_coord)){
       map->cells[coord_to_idx(door_coord)].terrain_id = FLOOR_ID;
     }
     Vec2 origin = {0};
@@ -177,64 +181,77 @@ void dig_room(Map* map, int size, Vec2 c, Vec2 dir)
     dig_rectangle(map,  origin.x, origin.y, size, size);
 }
 
+void dig_tunnel_thickness(Map* map, int tunnel_size, Vec2 curr_direction, Vec2 moving_coord)
+{
+  do {
+    // if size == 1
+    map->cells[coord_to_idx(moving_coord)].terrain_id = FLOOR_ID;
+    moving_coord.x += curr_direction.x;
+    moving_coord.y += curr_direction.y;
+    
+
+    int size_decrementor = tunnel_size;
+    // dig thicker tunnels
+    do {
+      Vec2 increment = {0};
+      if (size_decrementor % 2 == 1){
+        if(curr_direction.x != 0) {
+          increment.y = (int)(size_decrementor/2); 
+        } else if(curr_direction.y != 0) {
+          increment.x = (int)(size_decrementor/2); 
+        }
+      } else {
+        if(curr_direction.x != 0) {
+          increment.y = -size_decrementor/2; 
+        } else if(curr_direction.y != 0) {
+          increment.x = -size_decrementor/2; 
+        }
+      }
+      Vec2 new_tunnel = {moving_coord.x + increment.x, moving_coord.y + increment.y};
+      if(is_inside_bounds(*map, new_tunnel)){
+        map->cells[coord_to_idx(new_tunnel)].terrain_id = FLOOR_ID;
+      }
+      size_decrementor--;
+    } while(size_decrementor > 1);
+    
+    // after digging the tunnel part
+    // have a chance to spawn a room on a perpendicular direction to the tunnel
+    int room_chance = rand() % 100;
+    if(room_chance <= 20){
+      Vec2 room_dir = curr_direction.x == 0 ? (Vec2){1, 0} : (Vec2){0, 1};
+      int room_size = (rand()%4) + 2;
+      // randomly choose up/down/left/right
+      if(room_chance % 2 == 0){
+        room_dir.x *= -1;
+        room_dir.y *= -1;
+      }
+      dig_room(map, room_size, moving_coord, room_dir);
+    }
+    // c.x += directions[i].x;
+    // c.y += directions[i].y;
+
+  } while(is_inside_bounds(*map, moving_coord));
+}
+
 void tunneler(Map* map){
   int x = map->width/2;
   int y = map->height/2;
   int tunnel_min_size = 3;
   int tunnel_max_size = 6;
 
+  // have a chance to spawn more tunnelers either at the mid of the path
+
+  // going in a cross direction from the center
   Vec2 directions[4] = {{0, 1}, {0, -1}, {1,0},{-1,0}};
+
+  
+
+
   for(int i = 0; i < 4; i++) {
-    Vec2 c = {x, y}; 
+    Vec2 starting_coord = {x, y}; 
     Vec2 curr_direction = directions[i];
     int tunnel_size = rand()%(tunnel_max_size) + tunnel_min_size;
-    do {
-      // if size == 1
-      map->cells[coord_to_idx(c)].terrain_id = FLOOR_ID;
-      c.x += curr_direction.x;
-      c.y += curr_direction.y;
-      
-
-      int size_decrementor = tunnel_size;
-      // dig thicker tunnels
-      do {
-        Vec2 increment = {0};
-        if (size_decrementor % 2 == 1){
-          if(curr_direction.x != 0) {
-            increment.y = (int)(size_decrementor/2); 
-          } else if(curr_direction.y != 0) {
-            increment.x = (int)(size_decrementor/2); 
-          }
-        } else {
-          if(curr_direction.x != 0) {
-            increment.y = -size_decrementor/2; 
-          } else if(curr_direction.y != 0) {
-            increment.x = -size_decrementor/2; 
-          }
-        }
-        Vec2 c2 = {c.x + increment.x, c.y + increment.y};
-        if(is_inside_bounds(*map, c2)){
-          map->cells[coord_to_idx(c2)].terrain_id = FLOOR_ID;
-        }
-        size_decrementor--;
-      } while(size_decrementor > 1);
-      
-      // after digging the tunnel part
-      // have a chance to spawn a room on a perpendicular direction to the tunnel
-      int room_chance = rand() % 100;
-      if(room_chance <= 0){
-        Vec2 room_dir = curr_direction.x == 0 ? (Vec2){1, 0} : (Vec2){0, 1};
-        // randomly choose up/down/left/right
-        if(room_chance % 2 == 0){
-          room_dir.x *= -1;
-          room_dir.y *= -1;
-        }
-        dig_room(map, 5, c, room_dir);
-      }
-      // c.x += directions[i].x;
-      // c.y += directions[i].y;
-
-    } while(is_inside_bounds(*map, c));
+    dig_tunnel_thickness(map, tunnel_size, curr_direction, starting_coord);
   }
 }
 
