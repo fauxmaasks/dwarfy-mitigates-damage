@@ -1,7 +1,8 @@
 ## Earth Themed RL
 
 #### credits
-tsoding - nob.h and endless knowledge
+tsoding - nob.h and many other projects and endless knowledge
+raylib - for raylib library, scripts, some examples and fonts and whatnot
 
 
 #### some constraints
