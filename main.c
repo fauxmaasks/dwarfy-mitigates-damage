@@ -5,6 +5,7 @@
 #include "rogue.h"
 #include <time.h>
 #include <stdlib.h>
+#include <math.h>
 // 1920 x 1080
 #define SCREEN_WIDTH 1900
 #define SCREEN_HEIGHT 1000
@@ -12,8 +13,8 @@
 #define GRID_HEIGHT 900
 #define X_OFFSET 100
 #define Y_OFFSET 20
-#define COLS 60
-#define ROWS 60
+#define COLS 360
+#define ROWS 360
 
 #define NORMAL_MODE 0
 #define TARGETING_MODE 1
@@ -22,6 +23,8 @@
 #define FLOOR_ID 0
 #define WALL_ID 1
 #define STONE_ID 2
+#define DOOR_ID 3
+
 
 typedef unsigned int uint;
 
@@ -30,6 +33,7 @@ typedef struct Tile {
   uint entity_idx;
   uint item_idx;
   uint terrain_id;
+  bool checked;
 }Tile;
 
 typedef struct Map {
@@ -68,6 +72,10 @@ uint coord_to_idx(Vec2 c)
   return c.y*COLS + c.x;
 }
 
+double distf(Vec2 c1, Vec2 c2) 
+{
+  return sqrt(pow(c2.x-c1.x, 2) + pow(c2.y-c1.y, 2));
+}
 
 bool is_inside_bounds(Map map, Vec2 new_coord) 
 {
@@ -81,6 +89,43 @@ bool is_valid_to_move(Map map, Vec2 new_coord)
 {
   return map.cells[coord_to_idx(new_coord)].entity_idx == 0 &&
          map.cells[coord_to_idx(new_coord)].terrain_id == FLOOR_ID;
+}
+
+void add_walls_to_borders(Map* map, int origin_x, int origin_y)
+{
+  Vec2 tiles[COLS*ROWS];
+  tiles[0].x = origin_x;
+  tiles[0].y = origin_y;
+  int size = 1;
+  int iter = 0;
+  do{
+    size--;
+    Vec2 curr_coord;
+    curr_coord.x = tiles[size].x;
+    curr_coord.y = tiles[size].y;
+    for(int y = -1; y <= 1; y++){
+      for(int x = -1; x <= 1; x++){
+        int sum = rg_abs(x) + rg_abs(y);
+        if(y == 0 && x == 0) {continue;}
+        Vec2 new_coord = {curr_coord.x + x, curr_coord.y + y};
+        if(is_inside_bounds(*map, new_coord)){
+          if(map->cells[coord_to_idx(new_coord)].checked ){
+            continue;
+          } else if (map->cells[coord_to_idx(new_coord)].terrain_id == FLOOR_ID) {
+            tiles[size].x = new_coord.x;
+            tiles[size].y = new_coord.y;
+            size++;
+            map->cells[coord_to_idx(new_coord)].checked = true; 
+          } else {
+            map->cells[coord_to_idx(new_coord)].terrain_id = WALL_ID; 
+            map->cells[coord_to_idx(new_coord)].checked = true; 
+          }
+        }
+      }
+    }
+    // if (iter > 100) break;
+  // } while(size > 0 || range < 5);
+  } while(size > 0);
 }
 
 void make_quadrants(Vec2** qs, int* size, Map map, int x_splits, int y_splits)
@@ -147,51 +192,127 @@ void dig_rectangle(Map* map, int  origin_x, int origin_y, int width, int height)
   }
 }
 
+void dig_circle(Map* map, int  origin_x, int origin_y, int radius)
+{
+  for(int y = -radius; y <= radius ; y++){
+    for(int x = -radius; x <= radius; x++){
+      Vec2 c = {origin_x + x, origin_y + y};
+      if(is_inside_bounds(*map, c) && distf((Vec2){origin_x, origin_y}, c) < radius + 0.5){
+        map->cells[coord_to_idx(c)].terrain_id = FLOOR_ID;
+      }  
+    }
+  }
+}
+
+void dig_elipsis(Map* map, int origin_x, int origin_y, int radius_x, int radius_y)
+{
+  // elipsis formula = x^2/a^2 + y^2/b^2 = 1, a and b are the horizontal and vertical extremities
+  // sort by left top point to right bottom
+  // actually it's the left most, if sorting by both x and y mistakes occur
+  for(int y = origin_y-radius_y-1; y <= origin_y+radius_y+1; y++){
+    for(int x = origin_x-radius_x-1; x <= origin_x+radius_x+1; x++){
+      Vec2 c = {x, y};
+      float dist = ((float)pow(x-origin_x, 2)/(float)pow(radius_x, 2) + (float)pow(y-origin_y, 2)/(float)pow(radius_y, 2));
+      if(is_inside_bounds(*map, c) && dist <= 1.0f)
+      {
+        map->cells[coord_to_idx(c)].terrain_id = FLOOR_ID;
+      } 
+    }
+  }
+}
+
 void dig_room(Map* map, int size, Vec2 c, Vec2 dir)
 {
     Vec2 door_coord = (Vec2){c.x + dir.x, c.y + dir.y};
+    // move in direction until out of bounds or find a non floor
+    int iter = 0;
     do {
       door_coord.x += dir.x; 
       door_coord.y += dir.y; 
-    } while(is_inside_bounds(*map,  door_coord) && map->cells[coord_to_idx(door_coord)].terrain_id == FLOOR_ID);
+      iter++;
+    } while(iter < 10 && is_inside_bounds(*map,  door_coord) && map->cells[coord_to_idx(door_coord)].terrain_id == FLOOR_ID);
 
+    // make sure the coord is not out of bounds and add the door
     if(is_inside_bounds(*map, door_coord)){
-      map->cells[coord_to_idx(door_coord)].terrain_id = FLOOR_ID;
+      map->cells[coord_to_idx(door_coord)].terrain_id = DOOR_ID;
+    } else {
+      return;
     }
+
+    int shape_chance = rand()%100;
+    bool is_rect = false;
+    bool is_circle = false;
+    if(shape_chance <= 60) {
+      is_rect = true;
+    } else if(shape_chance > 60){
+      is_circle = true;
+    }
+
+    // calculate where the room top left coord will be
     Vec2 origin = {0};
     origin.x = door_coord.x;
     origin.y = door_coord.y;
-    if(dir.x < 0){
-      // if dir left, on x -1*size, on y -1 (size/2 round down) (from door) 
-      origin.x -= size;
-      origin.y -= (int)(size/2);
-    } else if (dir.x > 0){
-      // if dir right, on x +1, on y -1 (size/2 round down)
-      origin.x += 1;
-      origin.y -= (int)(size/2);
-    } else if (dir.y < 0){
-      // if dir up, on x -1*size/2, on y -1
-      origin.x -= (int)(size/2);
-      origin.y -= size;
-    } else if (dir.y > 0){
-      // if dir down, on x -1*size, on y +1
-      origin.x -= (int)(size/2);
-      origin.y += 1;
+    if(is_rect){
+      if(dir.x < 0){
+        // if dir left, on x -1*size, on y -1 (size/2 round down) (from door) 
+        origin.x -= size;
+        origin.y -= (int)(size/2);
+      } else if (dir.x > 0){
+        // if dir right, on x +1, on y -1 (size/2 round down)
+        origin.x += 1;
+        origin.y -= (int)(size/2);
+      } else if (dir.y < 0){
+        // if dir up, on x -1*size/2, on y -1
+        origin.x -= (int)(size/2);
+        origin.y -= size;
+      } else if (dir.y > 0){
+        // if dir down, on x -1*size, on y +1
+        origin.x -= (int)(size/2);
+        origin.y += 1;
+      }
     }
-    dig_rectangle(map,  origin.x, origin.y, size, size);
+    if(is_circle) {
+      if(dir.x < 0){
+        // if dir left, on x -1*size, on y -1 (size/2 round down) (from door) 
+        origin.x -= size-1;
+        // origin.y -= (int)(size/2);
+      } else if (dir.x > 0){
+        // if dir right, on x +1, on y -1 (size/2 round down)
+        origin.x += size+1;
+        // origin.y -= (int)(size/2);
+      } else if (dir.y < 0){
+        // if dir up, on x -1*size/2, on y -1
+        // origin.x -= (int)(size/2);
+        origin.y -= size-1;
+      } else if (dir.y > 0){
+        // if dir down, on x -1*size, on y +1
+        // origin.x -= (int)(size/2);
+        origin.y += size+1;
+      }
+    }
+
+    if(is_rect){
+      dig_rectangle(map, origin.x, origin.y, size, size);
+    }
+    if(is_circle){
+      dig_circle(map, origin.x, origin.y, size);
+    }
+
+    // using the top left coord (origin) and the width, height, dig out the room
 }
 
 void dig_tunnel_thickness(Map* map, int tunnel_size, Vec2 curr_direction, Vec2 moving_coord)
 {
+  int iter = 0;
   do {
+    iter++;
     // if size == 1
     map->cells[coord_to_idx(moving_coord)].terrain_id = FLOOR_ID;
     moving_coord.x += curr_direction.x;
     moving_coord.y += curr_direction.y;
     
-
     int size_decrementor = tunnel_size;
-    // dig thicker tunnels
+    // dig tunnel sides
     do {
       Vec2 increment = {0};
       if (size_decrementor % 2 == 1){
@@ -216,24 +337,79 @@ void dig_tunnel_thickness(Map* map, int tunnel_size, Vec2 curr_direction, Vec2 m
     
     // after digging the tunnel part
     // have a chance to spawn a room on a perpendicular direction to the tunnel
-    int room_chance = rand() % 100;
-    if(room_chance <= 20){
-      Vec2 room_dir = curr_direction.x == 0 ? (Vec2){1, 0} : (Vec2){0, 1};
-      int room_size = (rand()%4) + 2;
-      // randomly choose up/down/left/right
-      if(room_chance % 2 == 0){
-        room_dir.x *= -1;
-        room_dir.y *= -1;
-      }
-      dig_room(map, room_size, moving_coord, room_dir);
-    }
-    // c.x += directions[i].x;
-    // c.y += directions[i].y;
+    // int room_chance = rand() % 100;
+    // if(room_chance <= 20){
+    //   Vec2 room_dir = curr_direction.x == 0 ? (Vec2){1, 0} : (Vec2){0, 1};
+    //   int room_size = (rand()%4) + 2;
+    //   // randomly choose up/down/left/right
+    //   if(room_chance % 2 == 0){
+    //     room_dir.x *= -1;
+    //     room_dir.y *= -1;
+    //   }
+    //   dig_room(map, room_size, moving_coord, room_dir);
+    // }
 
-  } while(is_inside_bounds(*map, moving_coord));
+  // } while(is_inside_bounds(*map, moving_coord));
+  } while(iter < 1000);
 }
 
-void tunneler(Map* map){
+Vec2 dig_tunnel_tile_step(Map* map, int tunnel_size, Vec2 curr_direction, Vec2 moving_coord)
+{
+  if(tunnel_size == 0) return moving_coord;
+  // digging the "head" tunnel tile
+  if(!is_inside_bounds(*map, (Vec2){moving_coord.x, moving_coord.y})) return moving_coord;
+  map->cells[coord_to_idx(moving_coord)].terrain_id = FLOOR_ID;
+
+  Vec2 changing_coord = {moving_coord.x, moving_coord.y};
+  changing_coord.x += curr_direction.x;
+  changing_coord.y += curr_direction.y;
+  
+  int size_decrementor = tunnel_size;
+  // dig tunnel sides
+  do {
+    Vec2 increment = {0};
+    if (size_decrementor % 2 == 1){
+      if(curr_direction.x != 0) {
+        increment.y = (int)(size_decrementor/2); 
+      } 
+      if(curr_direction.y != 0) {
+        increment.x = (int)(size_decrementor/2); 
+      }
+    } else {
+      if(curr_direction.x != 0) {
+        increment.y = -size_decrementor/2; 
+      } 
+      if(curr_direction.y != 0) {
+        increment.x = -size_decrementor/2; 
+      }
+    }
+    Vec2 new_tunnel = {changing_coord.x + increment.x, changing_coord.y + increment.y};
+    if(is_inside_bounds(*map, new_tunnel)){
+      map->cells[coord_to_idx(new_tunnel)].terrain_id = FLOOR_ID;
+    }
+    size_decrementor--;
+  } while(size_decrementor > 1);
+  
+  // after digging the tunnel part
+  // have a chance to spawn a room on a perpendicular direction to the tunnel
+  // int room_chance = rand() % 100;
+  // if(room_chance <= 20){
+  //   Vec2 room_dir = curr_direction.x == 0 ? (Vec2){1, 0} : (Vec2){0, 1};
+  //   int room_size = (rand()%4) + 2;
+  //   // randomly choose up/down/left/right
+  //   if(room_chance % 2 == 0){
+  //     room_dir.x *= -1;
+  //     room_dir.y *= -1;
+  //   }
+  //   dig_room(map, room_size, moving_coord, room_dir);
+  // }
+
+  // } while(is_inside_bounds(*map, moving_coord));
+  return moving_coord;
+}
+
+void tunneler(Map* map)
+{
   int x = map->width/2;
   int y = map->height/2;
   int tunnel_min_size = 3;
@@ -243,16 +419,131 @@ void tunneler(Map* map){
 
   // going in a cross direction from the center
   Vec2 directions[4] = {{0, 1}, {0, -1}, {1,0},{-1,0}};
-
-  
-
-
   for(int i = 0; i < 4; i++) {
     Vec2 starting_coord = {x, y}; 
     Vec2 curr_direction = directions[i];
     int tunnel_size = rand()%(tunnel_max_size) + tunnel_min_size;
     dig_tunnel_thickness(map, tunnel_size, curr_direction, starting_coord);
   }
+}
+
+void tunneler_v2(Map* map, Vec2 start_dir, Vec2 origin_coord, int tunnel_max_thick, int horizontal_set_walk, int vertical_set_walk)
+{
+  int x, y;
+  if(origin_coord.x <= -1){
+    x = map->width/20;
+    y = map->height/20;
+  } else {
+    x = origin_coord.x;
+    y = origin_coord.y;
+  }
+
+  Vec2 dir;
+  Vec2 down = {0, 1};
+  Vec2 up = {0, -1};
+  Vec2 right = {1, 0};
+  Vec2 left = {-1, 0};
+  if(start_dir.x <= -1){
+    dir = down;
+  } else {
+    dir = start_dir;
+  }
+
+  int tunnel_min_size = 1;
+  int tunnel_max_size = 3;
+  int tunnel_size;
+
+  // deliberately set to -1 means randomize
+  if(tunnel_max_thick <= -1){
+    tunnel_size = rand()%(tunnel_max_size) + tunnel_min_size;
+  } else if (tunnel_max_thick == 0){
+    // coming as 0 means stop (branching path that got too thin
+    return; 
+  } else {
+    tunnel_size = tunnel_max_thick;
+  }
+
+  int max_walk_horizontal;
+  if(horizontal_set_walk <= -1){
+    max_walk_horizontal = (rand()%(COLS/20)+10);
+  } else {
+    max_walk_horizontal = horizontal_set_walk;
+  }
+
+  int max_walk_vertical;
+  if(vertical_set_walk <= -1){
+    max_walk_vertical  = (rand()%(ROWS/20)+10);
+  } else {
+    max_walk_vertical = vertical_set_walk;
+  }
+
+  // have a chance to spawn more tunnelers either at the mid of the path
+
+  // going in a cross direction from the center
+  // start top left and move towards bottom right kinda
+  Vec2 moving_coord = {x, y}; 
+  int tiles_walked = 0;
+  int iter = 0;
+  do{
+    if(max_walk_vertical == 0 || max_walk_horizontal == 0) return;
+    // walking vertically
+    if(dir.y != 0 && tiles_walked > max_walk_vertical){// ROWS*8/10){
+      dir = rand()%2 == 0 ? left : right;
+      tiles_walked = 0;
+      if(moving_coord.x > COLS/4 && rand()%2 == 0) {
+       tunneler_v2(map, left, moving_coord, tunnel_size - 1, max_walk_horizontal/3, max_walk_vertical/3);
+      } else {
+        tunneler_v2(map, dir, moving_coord, tunnel_size - 1, max_walk_horizontal/2, max_walk_vertical/2);
+      }
+      tunnel_size = rand()%(tunnel_max_size) + tunnel_min_size;
+      max_walk_horizontal = (rand()%(COLS*3/8)+(COLS/8));
+      // chance to spawn a new branching path
+    // } else if(dir.x == up.x && dir.y == up.y && tiles_walked > max_walk_vertical){// ROWS*8/10){
+    //   dir = right;
+    //   tiles_walked = 0;
+    //   if(moving_coord.x > COLS/4 && rand()%2 == 0) {
+    //    tunneler_v2(map, left, moving_coord, tunnel_size - 1, max_walk_horizontal/2, max_walk_vertical/2);
+    //   }
+    //   tunnel_size = rand()%(tunnel_max_size) + tunnel_min_size;
+    //   max_walk_horizontal = (rand()%(COLS*3/8)+(COLS/8));
+    } else if(dir.x != 0 && tiles_walked > max_walk_horizontal && moving_coord.y >= ROWS/2){// ROWS*8/10){
+      dir = up;
+      tiles_walked = 0;
+      if(moving_coord.y > ROWS/2 && rand()%2 == 0) {
+       tunneler_v2(map, down, moving_coord, tunnel_size - 1, max_walk_horizontal/3, max_walk_vertical/3);
+      }
+      tunnel_size = rand()%(tunnel_max_size) + tunnel_min_size;
+      max_walk_vertical = (rand()%(ROWS/2)+(ROWS/3));
+    } else if(dir.x != 0 && tiles_walked > max_walk_horizontal && moving_coord.y <= ROWS/2){// ROWS*8/10){
+      dir = down;
+      tiles_walked = 0;
+      if(moving_coord.y < ROWS/2 && rand()%2 == 0) {
+       tunneler_v2(map, up, moving_coord, tunnel_size - 1, max_walk_horizontal/3, max_walk_vertical/3);
+      }
+      tunnel_size = rand()%(tunnel_max_size) + tunnel_min_size;
+      max_walk_vertical = (rand()%(ROWS/2)+(ROWS/3));
+    }
+    moving_coord = dig_tunnel_tile_step(map, tunnel_size, dir, moving_coord);
+
+    if(rand()%1000 < 55){
+      int room_chance = rand() % 100;
+        Vec2 room_dir = dir.x == 0 ? (Vec2){1, 0} : (Vec2){0, 1};
+        int room_size = (rand()%6) + 3;
+        // randomly choose up/down/left/right
+        if(room_chance % 2 == 0){
+          room_dir.x *= -1;
+          room_dir.y *= -1;
+        }
+        dig_room(map, room_size, moving_coord, room_dir);
+    }
+    // take a step
+    moving_coord.x += dir.x;
+    moving_coord.y += dir.y;
+
+    tiles_walked++;
+    iter++;
+  }while(is_inside_bounds(*map, moving_coord) && iter < 1000);
+
 }
 
 void init_completely_walled_map(Map* map, uint width, uint height)
@@ -264,6 +555,7 @@ void init_completely_walled_map(Map* map, uint width, uint height)
     for(uint i = 0; i < width; i++){
         cells[j*width + i] = (Tile){0};
         cells[j*width + i].terrain_id = STONE_ID;
+        cells[j*width + i].checked = false;
     } 
   } 
   map->cells = cells;
@@ -451,7 +743,11 @@ int main()
   srand(time(NULL));
   // init_map(&map, COLS, ROWS);
   init_completely_walled_map(&map, COLS, ROWS);
-  tunneler(&map);
+  // dig_elipsis(&map, COLS/2, ROWS/2, 15, 8);
+  // dig_rectangle(&map, COLS/2, ROWS/2, 4, 6);
+  // add_walls_to_borders(&map, (COLS+1)/2, (ROWS+1)/2);
+  // dig_circle(&map, COLS/2, ROWS/2, 14);
+  tunneler_v2(&map, (Vec2){-1, -1}, (Vec2){-1, -1}, -1, -1, -1);
   // map_generator_random(&map);
   // add "player"
   // map.cells[0] = (Tile){.entity_idx=1, .item_idx=0, .terrain_id=0};
@@ -470,6 +766,10 @@ int main()
   Image stone_img = LoadImage("stone.png");
   ImageResizeNN(&stone_img, cell_width, cell_height);
   Texture2D stone_tex = LoadTextureFromImage(stone_img);
+
+  Image door_img = LoadImage("door.png");
+  ImageResizeNN(&door_img, cell_width, cell_height);
+  Texture2D door_tex = LoadTextureFromImage(door_img);
 
   Image player_img = ImageCopy(floor_img);
   ImageDrawText(&player_img, "@", cell_width/2-font_size/3, cell_height/2-font_size/2, font_size, WHITE);
@@ -520,7 +820,10 @@ int main()
             } else if(tile.terrain_id == STONE_ID){
               c = '0';
               t = stone_tex;
-            }
+            } else if(tile.terrain_id == DOOR_ID){
+              c = '+';
+              t = door_tex;
+          }
           }
           Vec2 tile_coord = (Vec2){.x = cell_width*x, .y = cell_height*y};
           if(is_mouse_inside_tile(mouse_pos, tile_coord, cell_width, cell_height)) {
