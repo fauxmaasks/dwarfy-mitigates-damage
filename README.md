@@ -1,5 +1,13 @@
 ## Earth Themed RL
 
+#### working on...
+- [ ] adding checks if room is able to fit
+- [ ] add tunneler turn chance
+- [ ] add tunneler queues (first dig tunnels then rooms?)
+- [ ] add room tunnelers
+- [ ] add room tunnelers that connect to other tunnels/rooms
+- [ ] add secret "shortcuts"
+
 #### credits
 tsoding - nob.h and many other projects and endless knowledge
 raylib - for raylib library, scripts, some examples and fonts and whatnot
