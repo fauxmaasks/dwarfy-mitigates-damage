@@ -9,17 +9,17 @@ typedef struct Vec2
 
 typedef struct Rec
 {
-  Vec2 coord;
+  Vec2 coord; // top left coord
   int width;
   int height;
 }Rec;
 
-typedef struct Vec2_Rec 
+typedef struct Rec_Arr 
 {
   unsigned int cap;
   unsigned int size;
   Rec* items;
-} Vec2_Rec;
+} Rec_Arr;
 
 typedef struct Vec2_Arr 
 {
@@ -33,7 +33,7 @@ extern int rg_is_Vec2_equal(Vec2 v0, Vec2 v1);
 extern int rg_bresenham_line(Vec2 pFrom, Vec2 pTo, Vec2_Arr* array);
 extern void rg_reverse_arr(Vec2_Arr* arr);
 
-// #ifdef ROGUE_H_IMPLEMENTATION
+#ifdef ROGUE_H_IMPLEMENTATION
 
 int rg_abs(int a) 
 {
@@ -153,5 +153,5 @@ int rg_bresenham_line(Vec2 pFrom, Vec2 pTo, Vec2_Arr* array)
 }
 
 
-// #endif //ROGUE_H_IMPLEMENTATION
+#endif //ROGUE_H_IMPLEMENTATION
 #endif // ROGUE_H_

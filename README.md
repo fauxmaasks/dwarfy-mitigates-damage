@@ -1,10 +1,10 @@
 ## Earth Themed RL
 
 #### working on...
-- [ ] adding checks if room is able to fit
-- [ ] add tunneler turn chance
+- [x] adding checks if room is able to fit
+- [x] add tunneler turn chance (need to improve though)
+- [ ] improve corridors shape, prevent it from going over other tunnels
 - [ ] add tunneler queues (first dig tunnels then rooms?)
-- [ ] add room tunnelers
 - [ ] add room tunnelers that connect to other tunnels/rooms
 - [ ] add secret "shortcuts"
 
