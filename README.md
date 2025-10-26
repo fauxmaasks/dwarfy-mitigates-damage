@@ -9,8 +9,8 @@
 - [ ] add secret "shortcuts"
 
 #### credits
-tsoding - nob.h and many other projects and endless knowledge
-raylib - for raylib library, scripts, some examples and fonts and whatnot
+- [tsoding](https://github.com/tsoding) - nob.h and many other projects and endless knowledge
+- [raysan](https://github.com/raysan5/raylib) - for raylib library, scripts, some examples
 
 
 #### some constraints
@@ -22,7 +22,6 @@ raylib - for raylib library, scripts, some examples and fonts and whatnot
 ## For Today
 - Proc Gen
     - Tunnelers
-
 
 
 ## Roadmap-ish?

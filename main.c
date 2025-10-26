@@ -53,6 +53,7 @@
 //      > >= 	For relational operators > and ≥ respectively 
 // 7: == != 	For relational = and ≠ respectively
 
+unsigned int t;
 typedef unsigned int uint;
 
 typedef struct Tile {
@@ -124,6 +125,27 @@ bool is_valid_to_move(Map map, Vec2 new_coord)
 {
   return map.cells[coord_to_idx(new_coord)].entity_idx == 0 &&
          map.cells[coord_to_idx(new_coord)].terrain_id == FLOOR_ID;
+}
+
+Vec2 get_new_direction_not_going_back_nor_going_to_bound(Rec bounds, Vec2 moving_coord, int speed, Vec2 dir)
+{
+  Vec2 new_dir;
+  // try going to perpendicularly first
+  new_dir.x = rand()%2 == 0 ? dir.y : -dir.y;
+  new_dir.y = rand()%2 == 0 ? dir.x : -dir.x;
+  Vec2 next_coord_2 = {moving_coord.x + new_dir.x*speed*2, moving_coord.y + new_dir.y*speed*2};
+  if(!is_inside_rec(bounds, next_coord_2)){
+    new_dir.x *= -1; 
+    new_dir.y *= -1; 
+    next_coord_2 = (Vec2){moving_coord.x + new_dir.x*speed*2, moving_coord.y + new_dir.y*speed*2};
+    if(!is_inside_rec(bounds, next_coord_2)){
+      // if both don't work, go backwards
+      new_dir.x = -dir.x;
+      new_dir.y = -dir.y;
+    }
+  }
+
+  return new_dir;
 }
 
 void add_walls_to_borders(Map* map, int origin_x, int origin_y)
@@ -546,7 +568,24 @@ int choose_random_shape(){
   return RECT_ID;
 }
 
-void tunneler_v3(Map* map, Rec bounds, Vec2 dir, Vec2 origin_coord, int tunnel_max_thick, int max_tiles_traversed, int speed, int turn_chance, int room_spawn_chance)
+typedef struct TunnelerV3Args {
+ Rec bounds;
+ Vec2 dir;
+ Vec2 origin_coord;
+ int tunnel_max_thick;
+ int max_walk;
+ int speed;
+ int turn_chance;
+ int room_spawn_chance;
+}TunnelerV3Args;
+
+typedef struct TunnelerV3Args_Arr {
+  uint length;
+  uint capacity;
+  TunnelerV3Args* items;
+}TunnelerV3Args_Arr;
+
+void tunneler_v3(Map* map, Rec bounds, Vec2 dir, Vec2 origin_coord, int tunnel_max_thick, int max_walk, int speed, int turn_chance, int room_spawn_chance)
 {
   // NOTES: Kyz the Wiz: parameters:
   // Width, direction, speed, chance to turn, chance to create rooms,
@@ -575,22 +614,6 @@ void tunneler_v3(Map* map, Rec bounds, Vec2 dir, Vec2 origin_coord, int tunnel_m
   if(room_spawn_chance == -100){
     room_spawn_chance = 100; // 10% (100 out of 1000)
   }
-
-  if(bounds.width <= 0 || bounds.height <= 0){
-    // if unset, default to the whole map as the bounds
-    bounds.coord.x = 0;
-    bounds.coord.y = 0;
-    bounds.width = map->width;
-    bounds.height = map->height;
-  }
-
-  Vec2 down = {0, 1};
-  Vec2 up = {0, -1};
-  Vec2 right = {1, 0};
-  Vec2 left = {-1, 0};
-  if(dir.x == -100 || dir.y == -100){
-    dir = up;
-  }
   int tunnel_min_size = 5;
   int tunnel_max_size = 5;
   int tunnel_size;
@@ -609,15 +632,27 @@ void tunneler_v3(Map* map, Rec bounds, Vec2 dir, Vec2 origin_coord, int tunnel_m
     }
   }
 
-  int max_walk;
-  if(max_tiles_traversed == -100){
-    max_walk = rand()%(30)+5; // 5 to 35 steps
-  } else if(max_tiles_traversed <= 0){
-    return;
-  } else {
-    max_walk = max_tiles_traversed;
+  if(bounds.width <= 0 || bounds.height <= 0){
+    // if unset, default to the whole map as the bounds
+    bounds.coord.x = 10;
+    bounds.coord.y = 10;
+    bounds.width = map->width - 10;
+    bounds.height = map->height - 10;
+  }
+  Vec2 down = {0, 1};
+  Vec2 up = {0, -1};
+  Vec2 right = {1, 0};
+  Vec2 left = {-1, 0};
+  Vec2 directions[4] = {up, down, left, right};
+  if(dir.x == -100 || dir.y == -100){
+    dir = up;
   }
 
+  if(max_walk == -100){
+    max_walk = rand()%(30)+5; // 5 to 35 steps
+  } else if(max_walk <= 0){
+    return;
+  } 
   Vec2 moving_coord = {x, y}; 
   int tiles_walked = 0;
   do{
@@ -629,43 +664,80 @@ void tunneler_v3(Map* map, Rec bounds, Vec2 dir, Vec2 origin_coord, int tunnel_m
 
     // chance to turn
     if(rand()%1000 <= turn_chance){
+      // lower the chance to turn? maybe not, only if turning twice in close proximity?
+      // dig a junction
       dig_rectangle_from_center(map, moving_coord.x, moving_coord.y, tunnel_size+2, tunnel_size+2);
+      if(rand()%4 <= 2){
+        //chance to switch the moving coord for interesting paths
+        // should be picking somewhere inside the junction rect
+        moving_coord.x += rand()%(tunnel_size+2) - tunnel_size/2;
+        moving_coord.y += rand()%(tunnel_size+2) - tunnel_size/2;
+      }
+      dir = get_new_direction_not_going_back_nor_going_to_bound(bounds, moving_coord, speed, dir);
+      // Vec2 new_moving_coord = (Vec2){moving_coord.x + dir.x*speed, moving_coord.y + dir.y*speed};
+      // if(!is_inside_rec(bounds, moving_coord)){
+      //   dir = get_new_direction_not_going_back_nor_going_to_bound(bounds, moving_coord, speed, dir);
+      // }
+
+      // if(!is_inside_rec(bounds, new_moving_coord)){
+      // }
+    ;
+    // Vec2 next_2_coord = (Vec2){moving_coord.x + 3*dir.x, moving_coord.y + 3*dir.y};
+    // if(is_inside_map(*map, next_coord) && is_inside_map(*map, next_2_coord) && map->cells[coord_to_idx(next_2_coord)].terrain_id != FLOOR_ID){
+      // instead of stoping try changing the direction
+      // dir = ;
+      // next_coord = (Vec2){moving_coord.x + dir.x*speed, moving_coord.y + dir.y*speed};
+    }
+
       //change direction to not be the same 
       // if x is not zero, then y won't be zero, and vice versa
-      Vec2 new_dir;
-      new_dir.x = dir.y;
-      new_dir.y = dir.x;
       // 50/50 to turn
       // if(rand()%2 == 0){
       //   new_dir.x *= -1;
       //   new_dir.y *= -1;
       // }
-      int new_turn_chance = turn_chance-100;
-      tunneler_v3(map, bounds, new_dir, moving_coord, tunnel_size-1, max_walk/2, speed, new_turn_chance, 0); 
-      Vec2 new_dir_2;
-      new_dir_2.x = dir.y*-1;
-      new_dir_2.y = dir.x*-1;
-      tunneler_v3(map, bounds, new_dir_2, moving_coord, tunnel_size-1, max_walk/2, speed, new_turn_chance, 0); 
-      turn_chance -= 100;
-    } else {
-      turn_chance += 50;
-    }
+      //
+      //
+      // int new_turn_chance = turn_chance;
+      // if(rand()%2 == 0){
+      //   Vec2 new_dir;
+      //   new_dir.x = dir.y;
+      //   new_dir.y = dir.x;
+      // tunneler_v3(map, bounds, new_dir, moving_coord, tunnel_size-1, max_walk/2, speed, new_turn_chance, 0); 
+      // } else {
+      //   Vec2 new_dir_2;
+      //   new_dir_2.x = dir.y*-1;
+      //   new_dir_2.y = dir.x*-1;
+      //   tunneler_v3(map, bounds, new_dir_2, moving_coord, tunnel_size-1, max_walk/2, speed, new_turn_chance, 0); 
+      // }
+      // turn_chance -= 100;
+      //
+      //
+    // } else {
+    //   // turn_chance += 50;
+    // }
 
     // check next steps
     Vec2 next_coord = (Vec2){moving_coord.x + dir.x*speed, moving_coord.y + dir.y*speed};
     // Vec2 next_2_coord = (Vec2){moving_coord.x + 3*dir.x, moving_coord.y + 3*dir.y};
     // if(is_inside_map(*map, next_coord) && is_inside_map(*map, next_2_coord) && map->cells[coord_to_idx(next_2_coord)].terrain_id != FLOOR_ID){
     if(!is_inside_rec(bounds, next_coord)){
-      break;
+      // instead of stoping try changing the direction
+      dir = get_new_direction_not_going_back_nor_going_to_bound(bounds, moving_coord, speed, dir);
+      next_coord = (Vec2){moving_coord.x + dir.x*speed, moving_coord.y + dir.y*speed};
+      if(!is_inside_rec(bounds, next_coord)){
+        dir = get_new_direction_not_going_back_nor_going_to_bound(bounds, moving_coord, speed, dir);
+      }
     }
-    if(!is_rectangle_available_to_dig(map, next_coord.x, next_coord.y, tunnel_size/2, tunnel_size/2)){
-      break;
-    }
-    if(!is_rectangle_available_to_dig(map, next_coord.x, next_coord.y, 2, 2)){
-      break;
-    }
+
+    // if(!is_rectangle_available_to_dig(map, next_coord.x, next_coord.y, tunnel_size/2, tunnel_size/2)){
+    //   break;
+    // }
+    // if(!is_rectangle_available_to_dig(map, next_coord.x, next_coord.y, 2, 2)){
+    //   break;
+    // }
     tiles_walked++;
-  }while(is_inside_rec(bounds, moving_coord));
+  }while(is_inside_rec(bounds, moving_coord) && tiles_walked < 1000);
 
 }
 
@@ -971,7 +1043,8 @@ int handle_input(int key, Map* map, Vec2* player_coord, Vec2_Arr* targets)
     if (IsKeyPressed(KEY_R) && targets->size == 2) rotate_terrain(map, targets->items[0], targets->items[1]);
     if (IsKeyPressed(KEY_N))
     {
-      srand(time(NULL));
+      t = time(NULL);
+      srand(t);
       init_completely_walled_map(map, COLS, ROWS);
       tunneler_v3(map, (Rec){-100, -100, -100, -100}, (Vec2){-100, -100}, (Vec2){-100, -100}, -100, -100, -100, -100, -100);
     }
@@ -1001,8 +1074,8 @@ int main()
   entities.items[1] = (Entity){.character = '@', .HP = 5};
   Vec2 player_coord = (Vec2){.x = 0, .y = 0};
   entities.items[2] = (Entity){.character = 'm', .HP = 5};
-
-  srand(time(NULL));
+  t = time(NULL);
+  srand(t);
   // init_map(&map, COLS, ROWS);
   init_completely_walled_map(&map, COLS, ROWS);
   // dig_elipsis(&map, COLS/2, ROWS/2, 15, 8);
@@ -1095,6 +1168,8 @@ int main()
           DrawTexture(t, tile_coord.x+X_OFFSET, tile_coord.y+Y_OFFSET, color);
         } 
       } 
+      DrawText(TextFormat("t is: %u", t), X_OFFSET+COLS*cell_width+100, Y_OFFSET, 30, WHITE);
+
       // DrawFPS(5, 5);
     EndDrawing();
 
