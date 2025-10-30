@@ -67,6 +67,20 @@
 unsigned int t;
 typedef unsigned int uint;
 
+typedef enum Directions{
+  North,
+  South,
+  West,
+  East
+}Directions;
+
+const Vec2 DIRECTIONS[4] = {
+  {0, 1},
+  {0, -1},
+  {-1, 0},
+  {1, 0},
+};
+
 typedef struct Tile {
   // 0 idx means it has nothing
   uint entity_idx;
@@ -88,17 +102,8 @@ typedef struct Entity {
   int HP;
   int teamID;
   int type;
+  Directions dir;
 } Entity;
-
-typedef struct Item {
-  uint img_src_idx;
-} Item;
-
-typedef struct Item_arr {
-  uint cap;
-  uint size;
-  Item *items;
-} Item_arr;
 
 typedef struct Entity_arr {
   uint cap;
@@ -1084,6 +1089,14 @@ bool is_mouse_inside_tile(Vector2 mouse_pos, Vec2 tile_coord, float cell_width,
          mouse_pos.y < tile_coord.y + cell_height + Y_OFFSET;
 }
 
+Texture2D img_file_to_texture(char* filename, float cell_width, float cell_height) {
+  Image img = LoadImage(filename);
+  ImageResizeNN(&img, cell_width, cell_height);
+  Texture2D txt = LoadTextureFromImage(img);
+  UnloadImage(img);
+  return txt;
+}
+
 int main() {
   InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "dwarfy, the protector");
   // init game
@@ -1101,10 +1114,10 @@ int main() {
   entities.items[1] = (Entity){.character = '@', .HP = 5, .teamID = PLAYER_TEAM, .type = PLAYER_TYPE };
   Vec2 player_coord = (Vec2){.x = 0, .y = 0};
 
-  entities.items[2] = (Entity){.character = 'c', .HP = 5, .teamID = ENEMY_TEAM, .type = CYCLOPS_ENEMY_TYPE };
-  entities.items[3] = (Entity){.character = 'b', .HP = 3, .teamID = ENEMY_TEAM, .type = BOMBY_ENEMY_TYPE };
-  entities.items[4] = (Entity){.character = 'd', .HP = 10, .teamID = ENEMY_TEAM, .type = DRAGON_ENEMY_TYPE };
-  entities.items[5] = (Entity){.character = 'c', .HP = 5, .teamID = ENEMY_TEAM, .type = CYCLOPS_ENEMY_TYPE };
+  entities.items[2] = (Entity){.character = 'c', .HP = 5, .teamID = ENEMY_TEAM, .type = CYCLOPS_ENEMY_TYPE, .dir = North};
+  entities.items[3] = (Entity){.character = 'b', .HP = 3, .teamID = ENEMY_TEAM, .type = BOMBY_ENEMY_TYPE, .dir = North};
+  entities.items[4] = (Entity){.character = 'd', .HP = 10, .teamID = ENEMY_TEAM, .type = DRAGON_ENEMY_TYPE, .dir = East };
+  entities.items[5] = (Entity){.character = 'c', .HP = 5, .teamID = ENEMY_TEAM, .type = CYCLOPS_ENEMY_TYPE, .dir = South };
   entities.size = 6;
 
   t = time(NULL);
@@ -1128,36 +1141,15 @@ int main() {
   map.cells[5*COLS + 17].entity_idx = 5;
 
   float font_size = 40;
-  Image floor_img = LoadImage("floor.png");
-  ImageResizeNN(&floor_img, cell_width, cell_height);
-  Texture2D floor_tex = LoadTextureFromImage(floor_img);
+  Texture2D floor_tex = img_file_to_texture("floor.png", cell_width, cell_height);
+  Texture2D pillar_tex = img_file_to_texture("pillar.png", cell_width, cell_height);
+  Texture2D stone_tex = img_file_to_texture("stone.png", cell_width, cell_height);
+  Texture2D door_tex = img_file_to_texture("door.png", cell_width, cell_height);
+  Texture2D player_tex = img_file_to_texture("baldy-dwarf.png", cell_width, cell_height);
+  Texture2D cyclop_tex = img_file_to_texture("eye.png", cell_width, cell_height);
+  Texture2D bomb_tex = img_file_to_texture("bomb.png", cell_width, cell_height);
+  Texture2D dragon_tex = img_file_to_texture("dragon.png", cell_width, cell_height);
 
-  Image pillar_img = LoadImage("pillar.png");
-  ImageResizeNN(&pillar_img, cell_width, cell_height);
-  Texture2D pillar_tex = LoadTextureFromImage(pillar_img);
-
-  Image stone_img = LoadImage("stone.png");
-  ImageResizeNN(&stone_img, cell_width, cell_height);
-  Texture2D stone_tex = LoadTextureFromImage(stone_img);
-
-  Image door_img = LoadImage("door.png");
-  ImageResizeNN(&door_img, cell_width, cell_height);
-  Texture2D door_tex = LoadTextureFromImage(door_img);
-
-  Image player_img = ImageCopy(floor_img);
-  ImageDrawText(&player_img, "@", cell_width / 2 - font_size / 3,
-                cell_height / 2 - font_size / 2, font_size, WHITE);
-  Texture2D player_tex = LoadTextureFromImage(player_img);
-
-  Image monster_img = ImageCopy(floor_img);
-  ImageDrawText(&monster_img, "m", cell_width / 2 - font_size / 4,
-                cell_height / 2 - font_size / 2, font_size, RED);
-  Texture2D monster_tex = LoadTextureFromImage(monster_img);
-
-  UnloadImage(floor_img);
-  UnloadImage(pillar_img);
-  UnloadImage(player_img);
-  UnloadImage(monster_img);
 
   SetTargetFPS(30);
   Vec2_Arr targets = {0};
@@ -1178,29 +1170,35 @@ int main() {
         Tile tile = map.cells[y * COLS + x];
         char c;
         Color color = WHITE;
-        Texture2D t;
+        Texture2D t_entity;
+        Texture2D t_terrain;
+        bool has_entity = false;
         if (tile.entity_idx != 0 && tile.entity_idx < entities.size) {
+          has_entity = true;
           Entity en = entities.items[tile.entity_idx];
           c = en.character;
           if (c == '@') {
-            t = player_tex;
-          } else if (c == 'c' || c == 'b' || c == 'd') {
-            t = monster_tex;
+            t_entity = player_tex;
+          } else if (c == 'c') {
+            t_entity = cyclop_tex;
+          } else if(  c == 'b' ) {
+            t_entity = bomb_tex;
+          } else if(c == 'd'){
+            t_entity = dragon_tex;
           }
-        } else {
-          if (tile.terrain_id == FLOOR_ID) {
-            c = '.';
-            t = floor_tex;
-          } else if (tile.terrain_id == WALL_ID) {
-            c = '#';
-            t = pillar_tex;
-          } else if (tile.terrain_id == STONE_ID) {
-            c = '0';
-            t = stone_tex;
-          } else if (tile.terrain_id == DOOR_ID) {
-            c = '+';
-            t = door_tex;
-          }
+        } 
+        if (tile.terrain_id == FLOOR_ID) {
+          c = '.';
+          t_terrain = floor_tex;
+        } else if (tile.terrain_id == WALL_ID) {
+          c = '#';
+          t_terrain = pillar_tex;
+        } else if (tile.terrain_id == STONE_ID) {
+          c = '0';
+          t_terrain = stone_tex;
+        } else if (tile.terrain_id == DOOR_ID) {
+          c = '+';
+          t_terrain = door_tex;
         }
         Vec2 tile_coord = (Vec2){.x = cell_width * x, .y = cell_height * y};
         if (is_mouse_inside_tile(mouse_pos, tile_coord, cell_width,
@@ -1208,7 +1206,8 @@ int main() {
           color = YELLOW;
           DrawText(TextFormat("Mouse xy: %d, %d", x, y), text_x, SCREEN_HEIGHT - 200, font_size, RAYWHITE);
         }
-        DrawTexture(t, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, color);
+        DrawTexture(t_terrain, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, color);
+        if (has_entity) DrawTexture(t_entity, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, color);
       }
     }
     // spells
@@ -1225,7 +1224,11 @@ int main() {
   }
   UnloadTexture(floor_tex);
   UnloadTexture(player_tex);
-  UnloadTexture(monster_tex);
-
-  CloseWindow();
+  UnloadTexture(player_tex);
+  UnloadTexture(cyclop_tex);
+  UnloadTexture(bomb_tex);
+  UnloadTexture(dragon_tex);
+  UnloadTexture(pillar_tex);
+  UnloadTexture(stone_tex);
+  UnloadTexture(door_tex);
 }
