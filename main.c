@@ -37,8 +37,8 @@
 #define PLAYER_TYPE 1
 #define NEUTRAL_TYPE 2
 #define BOMBY_ENEMY_TYPE 3
-#define CYCLOPS_ENEMY_TYPE 3
-#define DRAGON_ENEMY_TYPE 3
+#define CYCLOPS_ENEMY_TYPE 4
+#define DRAGON_ENEMY_TYPE 5
 
 // order of precendence
 // 1: ++ -- 	Prefix increment and decrement[note 1] 	Right-to-left
@@ -96,8 +96,6 @@ typedef struct Map {
 } Map;
 
 typedef struct Entity {
-  // uint img_src_idx;
-  // uint corpse_img_src_idx;
   char character;
   int HP;
   int teamID;
@@ -133,6 +131,83 @@ bool is_inside_map(Map map, Vec2 new_coord) {
 bool is_valid_to_move(Map map, Vec2 new_coord) {
   return map.cells[coord_to_idx(new_coord)].entity_idx == 0 &&
          map.cells[coord_to_idx(new_coord)].terrain_id == FLOOR_ID;
+}
+
+void get_atk_coords_from_entity(Map map, Entity en, int x, int y, Vec2_Arr* result){
+  switch(en.type) {
+    case CYCLOPS_ENEMY_TYPE: {
+      break;
+      // get a line on entities dir
+      int total_tiles;
+      if (en.dir == North) {
+        total_tiles = y; 
+      } else if (en.dir == South) {
+        total_tiles = ROWS - y; 
+      } else if (en.dir == West) {
+        total_tiles = x; 
+      } else if (en.dir == East) {
+        total_tiles = COLS - x; 
+      }
+      result->cap = total_tiles;
+      result->items = (Vec2*)malloc(sizeof(Vec2)*total_tiles);
+      result->size = total_tiles;
+      Vec2 curr_coord = {x, y};
+      Vec2 dir_coord = DIRECTIONS[en.dir];
+      for(int i = 0; i < total_tiles; i++){
+        curr_coord.x += dir_coord.x; 
+        curr_coord.y += dir_coord.y; 
+        result->items[i].x = curr_coord.x;
+        result->items[i].y = curr_coord.y;
+      }
+      break;
+    }
+    case BOMBY_ENEMY_TYPE: {
+      // get a 9 tiles around bomby + self tile 
+      result->cap = 9;
+      result->items = (Vec2*)malloc(sizeof(Vec2)*9);
+      result->size = 9;
+      int count = 0;
+      for(int j = -1; j < 2; j++){
+        for(int i = -1; i < 2; i++){
+          result->items[count] = (Vec2){.x = x+i, .y = y+j};
+          count++;
+          result->size=count;
+          break;
+        }
+        break;
+      }
+      break;
+    }
+    case DRAGON_ENEMY_TYPE: {
+      break;
+      // cone - for now very simplified version, rectangle!
+      int height, width, center_x, center_y;
+      Vec2 en_dir = DIRECTIONS[en.dir];
+      if(en.dir == North || en.dir == South){
+        height = 5;
+        width = 3;
+      } else {
+        height = 3;
+        width = 5;
+      }
+      center_x = x + en_dir.y*3;
+      center_y = y + en_dir.y*3;
+      result->cap = width*height;
+      result->items = (Vec2*)malloc(sizeof(Vec2)*width*height);
+      result->size = width*height;
+
+      int count = 0;
+      for (int y = -height / 2; y <= height / 2; y++) {
+        for (int x = -width / 2; x <= width / 2; x++) {
+          Vec2 c = {center_x + x, center_y + y};
+          result->items[count].x = c.x;
+          result->items[count].y = c.y;
+          count++;
+        }
+      }
+      break;
+    }
+  }
 }
 
 Vec2 get_new_direction_not_going_back_nor_going_to_bound(Rec bounds,
@@ -259,6 +334,7 @@ bool is_rectangle_available_to_dig(Map *map, int origin_x, int origin_y,
   }
   return true;
 }
+
 
 void dig_rectangle_from_center(Map *map, int center_x, int center_y, int width, int height) {
   for (int y = -height / 2; y <= height / 2; y++) {
@@ -1123,18 +1199,11 @@ int main() {
   t = time(NULL);
   srand(t);
   init_map(&map, COLS, ROWS);
-  // init_completely_walled_map(&map, COLS, ROWS);
-  // dig_elipsis(&map, COLS/2, ROWS/2, 15, 8);
-  // dig_rectangle(&map, COLS/2, ROWS/2, 4, 6);
-  // add_walls_to_borders(&map, (COLS+1)/2, (ROWS+1)/2);
-  // dig_circle(&map, COLS/2, ROWS/2, 14);
-  // tunneler_v2(&map, (Vec2){-1, -1}, (Vec2){-1, -1}, -1, -1, -1, 800);
-  // tunneler_v3(&map, (Rec){-100, -100, -100, -100}, (Vec2){-100, -100},
-              // (Vec2){-100, -100}, -100, -100, -100, -100, -100);
   map_generator_random(&map);
   // add "player"
   map.cells[0] = (Tile){.entity_idx=1, .item_idx=0, .terrain_id=0};
   // add monster
+  // (10, 8), (10, 3), (3, 5), (17, 5)
   map.cells[8*COLS + 10].entity_idx = 2;
   map.cells[3*COLS + 10].entity_idx = 3;
   map.cells[5*COLS + 3].entity_idx = 4;
@@ -1156,7 +1225,6 @@ int main() {
   targets.cap = 2;
   targets.items = (Vec2 *)malloc(sizeof(Vec2) * 2);
   while (!WindowShouldClose()) {
-
     int key = GetKeyPressed();
     handle_input(key, &map, &player_coord, &targets);
     Vector2 mouse_pos = GetMousePosition();
@@ -1165,6 +1233,9 @@ int main() {
     ClearBackground(BLACK);
     int text_x = X_OFFSET + COLS * cell_width + 30;
     int text_y = Y_OFFSET;
+    Vec2_Arr enemy_coords = {0};
+    enemy_coords.items = (Vec2*)malloc(sizeof(Vec2)*num_of_monsters);
+    enemy_coords.cap = num_of_monsters;
     for (uint y = 0; y < ROWS; y++) {
       for (uint x = 0; x < COLS; x++) {
         Tile tile = map.cells[y * COLS + x];
@@ -1177,14 +1248,19 @@ int main() {
           has_entity = true;
           Entity en = entities.items[tile.entity_idx];
           c = en.character;
+
           if (c == '@') {
             t_entity = player_tex;
-          } else if (c == 'c') {
-            t_entity = cyclop_tex;
-          } else if(  c == 'b' ) {
-            t_entity = bomb_tex;
-          } else if(c == 'd'){
-            t_entity = dragon_tex;
+          } else {
+            enemy_coords.items[enemy_coords.size] = (Vec2){x, y};
+            enemy_coords.size++;
+            if (c == 'c') {
+              t_entity = cyclop_tex;
+            } else if(  c == 'b' ) {
+              t_entity = bomb_tex;
+            } else if(c == 'd'){
+              t_entity = dragon_tex;
+            }
           }
         } 
         if (tile.terrain_id == FLOOR_ID) {
@@ -1207,7 +1283,61 @@ int main() {
           DrawText(TextFormat("Mouse xy: %d, %d", x, y), text_x, SCREEN_HEIGHT - 200, font_size, RAYWHITE);
         }
         DrawTexture(t_terrain, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, color);
-        if (has_entity) DrawTexture(t_entity, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, color);
+        if (has_entity) 
+          DrawTexture(t_entity, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, color);
+      }
+      for(int i = 0; i < enemy_coords.size; i++){
+        int x = enemy_coords.items[i].x;
+        int y = enemy_coords.items[i].y;
+        int entity_idx = map.cells[y*COLS + x].entity_idx;
+        Entity entity = entities.items[entity_idx];
+        Vec2_Arr* affected_tiles = {0};
+        get_atk_coords_from_entity(map, entity, x, y, affected_tiles);
+        for(int j = 0; j < affected_tiles->size; j++){
+          Vec2 coord = affected_tiles->items[j];
+          if(!is_inside_map(map, coord)){
+            continue;
+          }
+          Tile tile = map.cells[coord.y * COLS + coord.x];
+          Vec2 tile_coord = (Vec2){.x = cell_width * coord.x, .y = cell_height * coord.y};
+          Texture2D t_terrain;
+          Texture2D t_entity;
+          bool has_entity;
+
+          if (tile.entity_idx != 0 && tile.entity_idx < entities.size) {
+
+            has_entity = true;
+            Entity en = entities.items[tile.entity_idx];
+            char c = en.character;
+
+            if (c == '@') {
+              t_entity = player_tex;
+            } else {
+              if (c == 'c') {
+                t_entity = cyclop_tex;
+              } else if(  c == 'b' ) {
+                t_entity = bomb_tex;
+              } else if(c == 'd'){
+                t_entity = dragon_tex;
+              }
+            }
+          } 
+          if (tile.terrain_id == FLOOR_ID) {
+            t_terrain = floor_tex;
+          } else if (tile.terrain_id == WALL_ID) {
+            t_terrain = pillar_tex;
+          } else if (tile.terrain_id == STONE_ID) {
+            t_terrain = stone_tex;
+          } else if (tile.terrain_id == DOOR_ID) {
+            t_terrain = door_tex;
+          }
+          DrawTexture(t_terrain, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, RED);
+          if(has_entity){
+            DrawTexture(t_entity, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, RED);
+          }
+        }
+        free(affected_tiles->items);
+        free(affected_tiles);
       }
     }
     // spells
@@ -1217,7 +1347,7 @@ int main() {
     text_y += font_size + 2;
     DrawText(TextFormat("2 - Rotate Earth", t), text_x, text_y, font_size, RAYWHITE);
     text_y += font_size + 2;
-
+    free(enemy_coords.items);
 
     // DrawFPS(5, 5);
     EndDrawing();

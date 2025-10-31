@@ -12,8 +12,7 @@
 - no fog
 
 ## For Today
-- Proc Gen
-    - Tunnelers
+
 
 
 ## Roadmap-ish?
@@ -22,9 +21,6 @@
     - [x] make an outer castle resemblance
         - [x] inner palace, columns and pillars, walls
         - [ ] throne room, special expensive stuff, gems and stuff (various effects)
-    - [ ] add some scenery 
-        - [ ] gain more points if protect valuables (vases, windows?, statues!) 
-        - [ ] houses instead of pillars?
 - [ ] player
     - [ ] spells - earth skills
         - [ ] protect with earth (temp shield)
@@ -52,6 +48,9 @@
     - [ ] telegraphed atks (when any)
     - [ ] atks execution (atk or telegraphed atk)
 #### Nice to haves
+- [ ] add some scenery 
+    - [ ] gain more points if protect valuables (vases, windows?, statues!) 
+    - [ ] houses instead of pillars?
 - [ ] actions logs
 - [ ] neutrals ai enhancements
     - [ ] run away and try not to get hit?
