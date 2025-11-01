@@ -24,6 +24,7 @@
 #define WALL_ID 1
 #define STONE_ID 2
 #define DOOR_ID 3
+#define GREAT_WALL_ID 4
 
 #define RECT_ID 100
 #define CIRCLE_ID 101
@@ -34,11 +35,17 @@
 #define NEUTRAL_TEAM 2
 #define ENEMY_TEAM 3
 
-#define PLAYER_TYPE 1
-#define NEUTRAL_TYPE 2
-#define BOMBY_ENEMY_TYPE 3
-#define CYCLOPS_ENEMY_TYPE 4
-#define DRAGON_ENEMY_TYPE 5
+#define PLAYER_TYPE 100
+#define NEUTRAL_TYPE 200
+#define CHICKEN_NEUTRAL_TYPE 201
+#define BOMBY_ENEMY_TYPE 300
+#define CYCLOPS_ENEMY_TYPE 301
+#define DRAGON_ENEMY_TYPE 302
+
+#define SPELL_ID_NONE 99
+#define SPELL_ID_MOVE_TERRAIN 100
+#define SPELL_ID_ROTATE_TERRAIN 101
+#define SPELL_ID_CREATE_TERRAIN 102
 
 // #define EMPTY_ENTITY_IDX RAND_MAX
 #define EMPTY_ENTITY_IDX 100
@@ -106,13 +113,13 @@ typedef struct Entity {
   Directions dir;
 } Entity;
 
-typedef struct Entity_arr {
+typedef struct Entity_Arr {
   uint cap;
   uint size;
   Entity *items;
-} Entity_arr;
+} Entity_Arr;
 
-uint mode = NORMAL_MODE;
+int mode = NORMAL_MODE;
 
 uint coord_to_idx(Vec2 c) { return c.y * COLS + c.x; }
 
@@ -120,19 +127,26 @@ double distf(Vec2 c1, Vec2 c2) {
   return sqrt(pow(c2.x - c1.x, 2) + pow(c2.y - c1.y, 2));
 }
 
-bool is_inside_rec(Rec r, Vec2 new_coord) {
+bool is_inside_rec(Rec r, Vec2 new_coord) 
+{
   return new_coord.x >= r.coord.x && new_coord.y >= r.coord.y &&
          new_coord.x < r.coord.x + r.width &&
          new_coord.y < r.coord.y + r.height;
 }
 
-bool is_inside_map(Map map, Vec2 new_coord) {
+bool is_inside_map(Map map, Vec2 new_coord) 
+{
   return new_coord.x >= 0 && new_coord.y >= 0 && new_coord.x < map.width &&
          new_coord.y < map.height;
 }
 
+bool is_valid_to_land(Map map, Vec2 coord)
+{
+  return map.cells[coord_to_idx(coord)].entity_idx == EMPTY_ENTITY_IDX;
+}
+
 bool is_valid_to_move(Map map, Vec2 new_coord) {
-  return map.cells[coord_to_idx(new_coord)].entity_idx == RAND_MAX &&
+  return map.cells[coord_to_idx(new_coord)].entity_idx == EMPTY_ENTITY_IDX &&
          map.cells[coord_to_idx(new_coord)].terrain_id == FLOOR_ID;
 }
 
@@ -140,30 +154,44 @@ bool are_coords_equal(Vec2 c1, Vec2 c2) {
   return c1.x == c2.x && c1.y == c2.y;
 }
 
+Vec2 add_coord(Vec2 a, Vec2 b)
+{
+  return (Vec2){a.x+b.x, a.y+ b.y};
+}
+
 void get_atk_coords_from_entity(Map map, Entity en, int x, int y, Vec2_Arr* result){
   switch(en.type) {
     case CYCLOPS_ENEMY_TYPE: {
       // get a line on entities dir
-      int total_tiles;
+      int max_tiles;
       if (en.dir == North) {
-        total_tiles = y; 
+        max_tiles = y; 
       } else if (en.dir == South) {
-        total_tiles = ROWS - y; 
+        max_tiles = ROWS - y; 
       } else if (en.dir == West) {
-        total_tiles = x; 
+        max_tiles = x; 
       } else if (en.dir == East) {
-        total_tiles = COLS - x; 
+        max_tiles = COLS - x; 
       }
-      result->cap = total_tiles;
-      result->items = (Vec2*)malloc(sizeof(Vec2)*total_tiles);
-      result->size = total_tiles;
+      result->cap = max_tiles;
+      result->items = (Vec2*)malloc(sizeof(Vec2)*max_tiles);
+      result->size = 0;
       Vec2 curr_coord = {x, y};
       Vec2 dir_coord = DIRECTIONS[en.dir];
-      for(int i = 0; i < total_tiles; i++){
+      for(int i = 0; i < max_tiles; i++){
         curr_coord.x += dir_coord.x; 
         curr_coord.y += dir_coord.y; 
+        if(!is_inside_map(map,curr_coord)){
+          break;
+        }
+        int t_id = map.cells[coord_to_idx(curr_coord)].terrain_id;
         result->items[i].x = curr_coord.x;
         result->items[i].y = curr_coord.y;
+        result->size = i+1;
+        if(t_id == WALL_ID){
+          // after encountering a wall stop
+          break;
+        }
       }
       break;
     }
@@ -200,6 +228,7 @@ void get_atk_coords_from_entity(Map map, Entity en, int x, int y, Vec2_Arr* resu
       result->size = width*height;
 
       int count = 0;
+      // to make it be blocked, prob best to change how I process?
       for (int y = -height / 2; y <= height / 2; y++) {
         for (int x = -width / 2; x <= width / 2; x++) {
           Vec2 c = {center_x + x, center_y + y};
@@ -1016,7 +1045,7 @@ bool move(Map *map, Vec2 *entity_coord, int dir_x, int dir_y) {
   if (is_inside_map(*map, new_coord) && is_valid_to_move(*map, new_coord)) {
     map->cells[coord_to_idx(new_coord)].entity_idx =
         map->cells[coord_to_idx(*entity_coord)].entity_idx;
-    map->cells[coord_to_idx(*entity_coord)].entity_idx = 0;
+    map->cells[coord_to_idx(*entity_coord)].entity_idx = EMPTY_ENTITY_IDX;
     entity_coord->x = new_coord.x;
     entity_coord->y = new_coord.y;
     return true;
@@ -1049,7 +1078,32 @@ void swap_in_sequence(Map *map, Vec2 origin_coord, Vec2 *sequence, int size) {
     }
   }
 }
-bool rotate_terrain(Map *map, Vec2 origin_coord, Vec2 rotation_dir, Entity_arr* entities) {
+
+bool create_wall(Map *map, Vec2 coord, Entity_Arr* entities) 
+{
+  int t_id = map->cells[coord_to_idx(coord)].terrain_id; 
+  int en_id = map->cells[coord_to_idx(coord)].entity_idx; 
+  if(en_id != EMPTY_ENTITY_IDX){
+    // add launch here;
+    int count = 0;
+    do {
+      Vec2 dir = DIRECTIONS[rand()%4];
+      Vec2 new_coord = add_coord(coord, dir);
+      if(is_inside_map(*map, new_coord) && is_valid_to_land(*map, new_coord)){
+        map->cells[coord_to_idx(new_coord)].entity_idx = en_id; 
+        map->cells[coord_to_idx(coord)].entity_idx = EMPTY_ENTITY_IDX; 
+        break;
+      }
+      count++;
+    } while( count < 10);
+  }
+  if(t_id != WALL_ID || t_id != GREAT_WALL_ID){
+    map->cells[coord_to_idx(coord)].terrain_id = WALL_ID; 
+  }
+  return true;
+} 
+
+bool rotate_terrain(Map *map, Vec2 origin_coord, Vec2 rotation_dir, Entity_Arr* entities) {
   // for now size is fixed 2x2, 3x3 is interesting too
   int size = 3;
   int x_dir = origin_coord.x < rotation_dir.x ? 1 : -1;
@@ -1078,7 +1132,9 @@ bool rotate_terrain(Map *map, Vec2 origin_coord, Vec2 rotation_dir, Entity_arr* 
       Vec2 middle_coord = (Vec2){.x = origin_coord.x + 1, .y = origin_coord.y + 1}; 
       if(is_inside_map(*map, middle_coord)){
         int en_idx = map->cells[coord_to_idx(middle_coord)].entity_idx;
-        entities->items[en_idx].dir = (entities->items[en_idx].dir + 1)%4;
+        if (en_idx != EMPTY_ENTITY_IDX){
+          entities->items[en_idx].dir = (entities->items[en_idx].dir + 1)%4;
+        }
       }
     } else {
       Vec2 sequence[8] = {{0, 0}, {0, 1}, {0, 2}, {1, 2},
@@ -1086,7 +1142,7 @@ bool rotate_terrain(Map *map, Vec2 origin_coord, Vec2 rotation_dir, Entity_arr* 
       swap_in_sequence(map, origin_coord, sequence, seq_size);
       Vec2 middle_coord = (Vec2){.x = origin_coord.x + 1, .y = origin_coord.y + 1}; 
       if(is_inside_map(*map, middle_coord)){
-        int en_idx = map->cells[coord_to_idx(origin_coord)].entity_idx;
+        int en_idx = map->cells[coord_to_idx(middle_coord)].entity_idx;
         if (en_idx != EMPTY_ENTITY_IDX){
           entities->items[en_idx].dir = (entities->items[en_idx].dir - 1)%4;
         }
@@ -1124,11 +1180,19 @@ bool move_terrain(Map *map, Vec2 origin_coord, Vec2 target_coord) {
         // if the terrain is clear of other terrain or entities, and we are not at the end of the path
         continue;
       } 
-      Vec2 prev_coord = tiles.items[i-1]; 
-      map->cells[coord_to_idx(prev_coord)].terrain_id = t_id;
-      map->cells[coord_to_idx(prev_coord)].entity_idx = en_id;
-      if(are_coords_equal(prev_coord, origin_coord)){
-        break; 
+      if(i == tiles.size -1){
+        // reached the end without any obstacles
+        map->cells[coord_to_idx(curr_coord)].terrain_id = t_id;
+        map->cells[coord_to_idx(curr_coord)].entity_idx = en_id;
+      } else {
+        // reached an obstacle and not at the end
+        Vec2 prev_coord = tiles.items[i-1];
+        map->cells[coord_to_idx(prev_coord)].terrain_id = t_id;
+        map->cells[coord_to_idx(prev_coord)].entity_idx = en_id;
+        if(are_coords_equal(prev_coord, origin_coord)){
+          // if was going to move 1 tile, and there was 
+          break; 
+        }
       }
       map->cells[coord_to_idx(origin_coord)].terrain_id = FLOOR_ID;
       map->cells[coord_to_idx(origin_coord)].entity_idx = EMPTY_ENTITY_IDX;
@@ -1161,7 +1225,10 @@ Vec2 get_tile_coord_under_pixel_coord(Vector2 pixel_coord) {
   float y_on_grid = (int)((pixel_coord.y - Y_OFFSET) / cell_height);
   return (Vec2){.x = x_on_grid, .y = y_on_grid};
 }
-
+void clear_targets(Vec2_Arr* targets)
+{
+  targets->size = 0;
+}
 void tile_clicked(Map map, Vec2_Arr *targets) {
   if (targets->size == 2) {
     // reset
@@ -1178,10 +1245,37 @@ void tile_clicked(Map map, Vec2_Arr *targets) {
   targets->size++;
   printf("selecting: (%d, %d)\n", coord.x, coord.y);
 }
+void check_and_execute_spell(Map* map, Entity_Arr* entities, Vec2_Arr* targets, int* mode, int* spell_id)
+{
+  if(*spell_id != SPELL_ID_NONE) {
+    bool is_executed = false;
+    if(*spell_id == SPELL_ID_MOVE_TERRAIN && targets->size == 2){
+      move_terrain(map, targets->items[0], targets->items[1]);
+      is_executed = true;
+    } else if(*spell_id == SPELL_ID_ROTATE_TERRAIN && targets->size == 2){
+      rotate_terrain(map, targets->items[0], targets->items[1], entities);
+      is_executed = true;
+    } else if(*spell_id == SPELL_ID_CREATE_TERRAIN && targets->size == 1){
+      create_wall(map, targets->items[0], entities);
+      is_executed = true;
+    }
+    if(is_executed == true){
+      clear_targets(targets);
+      *mode = NORMAL_MODE;
+      *spell_id = SPELL_ID_NONE;
+    }
+  }
+}
 
-int handle_input(int key, Map *map, Vec2 *player_coord, Vec2_Arr *targets, Entity_arr* entities) {
-  if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+int handle_input(int key, Map *map, Vec2 *player_coord, Vec2_Arr *targets, Entity_Arr* entities, int* mode, int* spell_id) {
+  if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)){
     tile_clicked(*map, targets);
+    check_and_execute_spell(map, entities, targets, mode, spell_id);
+  }
+  if (IsMouseButtonReleased(MOUSE_BUTTON_RIGHT)){
+    clear_targets(targets);
+    *spell_id = SPELL_ID_NONE;
+  }
   if (IsKeyPressed(KEY_UP))
     move(map, player_coord, 0, -1);
   if (IsKeyPressed(KEY_DOWN))
@@ -1190,10 +1284,21 @@ int handle_input(int key, Map *map, Vec2 *player_coord, Vec2_Arr *targets, Entit
     move(map, player_coord, -1, 0);
   if (IsKeyPressed(KEY_RIGHT))
     move(map, player_coord, 1, 0);
-  if (IsKeyPressed(KEY_ONE) && targets->size == 2)
-    move_terrain(map, targets->items[0], targets->items[1]);
-  if (IsKeyPressed(KEY_TWO) && targets->size == 2)
-    rotate_terrain(map, targets->items[0], targets->items[1], entities);
+  if (IsKeyPressed(KEY_ONE)){
+    clear_targets(targets);
+    *mode = TARGETING_MODE;
+    *spell_id = SPELL_ID_MOVE_TERRAIN;
+  }
+  if (IsKeyPressed(KEY_TWO)){
+    clear_targets(targets);
+    *mode = TARGETING_MODE;
+    *spell_id = SPELL_ID_ROTATE_TERRAIN;
+  }
+  if (IsKeyPressed(KEY_THREE)){
+    clear_targets(targets);
+    *mode = TARGETING_MODE;
+    *spell_id = SPELL_ID_CREATE_TERRAIN;
+  }
   if (IsKeyPressed(KEY_N)) {
     init_map(map, map->width, map->height);
     map_generator_random(map);
@@ -1228,22 +1333,28 @@ int main() {
   float cell_width = (float)GRID_WIDTH / (float)COLS;
   float cell_height = (float)GRID_HEIGHT / (float)ROWS;
   Map map;
-  Entity_arr entities = {0};
+  Entity_Arr entities = {0};
   int num_of_monsters = 4;
   int num_of_neutrals = 6;
+  int selected_spell_id = SPELL_ID_NONE;
   // first place should be empty?
   // very weird thing, prob switch it -> make a constant that symbolizes the "undefined" id
-  entities.cap = 2+num_of_monsters+num_of_neutrals;
+  entities.cap = 1+num_of_monsters+num_of_neutrals;
   entities.items = (Entity *)malloc(sizeof(Entity) * entities.cap);
 
   entities.items[0] = (Entity){.character = '@', .HP = 5, .teamID = PLAYER_TEAM, .type = PLAYER_TYPE };
   Vec2 player_coord = (Vec2){.x = 0, .y = 0};
-
   entities.items[1] = (Entity){.character = 'c', .HP = 5, .teamID = ENEMY_TEAM, .type = CYCLOPS_ENEMY_TYPE, .dir = North};
   entities.items[2] = (Entity){.character = 'b', .HP = 3, .teamID = ENEMY_TEAM, .type = BOMBY_ENEMY_TYPE, .dir = North};
   entities.items[3] = (Entity){.character = 'd', .HP = 10, .teamID = ENEMY_TEAM, .type = DRAGON_ENEMY_TYPE, .dir = East };
   entities.items[4] = (Entity){.character = 'c', .HP = 5, .teamID = ENEMY_TEAM, .type = CYCLOPS_ENEMY_TYPE, .dir = South };
-  entities.size = 5;
+  entities.items[5] = (Entity){.character = 'k', .HP = 2, .teamID = NEUTRAL_TEAM, .type = CHICKEN_NEUTRAL_TYPE, .dir = South };
+  entities.items[6] = (Entity){.character = 'k', .HP = 2, .teamID = NEUTRAL_TEAM, .type = CHICKEN_NEUTRAL_TYPE, .dir = South };
+  entities.items[7] = (Entity){.character = 'k', .HP = 2, .teamID = NEUTRAL_TEAM, .type = CHICKEN_NEUTRAL_TYPE, .dir = South };
+  entities.items[8] = (Entity){.character = 'k', .HP = 2, .teamID = NEUTRAL_TEAM, .type = CHICKEN_NEUTRAL_TYPE, .dir = South };
+  entities.items[9] = (Entity){.character = 'k', .HP = 2, .teamID = NEUTRAL_TEAM, .type = CHICKEN_NEUTRAL_TYPE, .dir = South };
+  entities.items[10] = (Entity){.character = 'k', .HP = 2, .teamID = NEUTRAL_TEAM, .type = CHICKEN_NEUTRAL_TYPE, .dir = South };
+  entities.size = 11;
 
   t = time(NULL);
   srand(t);
@@ -1251,12 +1362,19 @@ int main() {
   map_generator_random(&map);
   // add "player"
   map.cells[0] = (Tile){.entity_idx=0, .item_idx=0, .terrain_id=0};
-  // add monster
+  // add monsters
   // (10, 8), (10, 3), (3, 5), (17, 5)
   map.cells[8*COLS + 10].entity_idx = 1;
   map.cells[3*COLS + 10].entity_idx = 2;
   map.cells[5*COLS + 3].entity_idx = 3;
   map.cells[5*COLS + 17].entity_idx = 4;
+  // neutrals
+  map.cells[10*COLS + 10].entity_idx = 5;
+  map.cells[3*COLS + 8].entity_idx = 6;
+  map.cells[6*COLS + 3].entity_idx = 7;
+  map.cells[4*COLS + 16].entity_idx = 8;
+  map.cells[4*COLS + 3].entity_idx = 9;
+  map.cells[4*COLS + 18].entity_idx = 10;
 
   float font_size = 40;
   Texture2D floor_tex = img_file_to_texture("floor.png", cell_width, cell_height);
@@ -1264,10 +1382,11 @@ int main() {
   Texture2D stone_tex = img_file_to_texture("stone.png", cell_width, cell_height);
   Texture2D door_tex = img_file_to_texture("door.png", cell_width, cell_height);
   Texture2D player_tex = img_file_to_texture("baldy-dwarf.png", cell_width, cell_height);
+  Texture2D chicken_tex = img_file_to_texture("chicken.png", cell_width, cell_height);
   Texture2D cyclop_tex = img_file_to_texture("eye.png", cell_width, cell_height);
   Texture2D bomb_tex = img_file_to_texture("bomb.png", cell_width, cell_height);
   Texture2D dragon_tex = img_file_to_texture("dragon.png", cell_width, cell_height);
-
+  Texture2D right_arrow_tex = img_file_to_texture("right-arrow.png", cell_width, cell_height);
 
   SetTargetFPS(30);
   Vec2_Arr targets = {0};
@@ -1275,7 +1394,7 @@ int main() {
   targets.items = (Vec2 *)malloc(sizeof(Vec2) * 2);
   while (!WindowShouldClose()) {
     int key = GetKeyPressed();
-    handle_input(key, &map, &player_coord, &targets, &entities);
+    handle_input(key, &map, &player_coord, &targets, &entities, &mode, &selected_spell_id);
     Vector2 mouse_pos = GetMousePosition();
 
     BeginDrawing();
@@ -1285,6 +1404,7 @@ int main() {
     Vec2_Arr enemy_coords = {0};
     enemy_coords.items = (Vec2*)malloc(sizeof(Vec2)*num_of_monsters);
     enemy_coords.cap = num_of_monsters;
+    // draw world state
     for (uint y = 0; y < ROWS; y++) {
       for (uint x = 0; x < COLS; x++) {
         Tile tile = map.cells[y * COLS + x];
@@ -1300,6 +1420,8 @@ int main() {
 
           if (c == '@') {
             t_entity = player_tex;
+          } else if (c == 'k'){
+            t_entity = chicken_tex;
           } else {
             enemy_coords.items[enemy_coords.size] = (Vec2){x, y};
             enemy_coords.size++;
@@ -1333,9 +1455,11 @@ int main() {
         }
         DrawTexture(t_terrain, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, color);
         if (has_entity) 
-          DrawTexture(t_entity, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, color);
+          DrawTexture(t_entity, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, WHITE);
       }
     }
+
+    // draw enemies atk
     for(int i = 0; i < enemy_coords.size; i++){
       int x = enemy_coords.items[i].x;
       int y = enemy_coords.items[i].y;
@@ -1361,6 +1485,8 @@ int main() {
 
           if (c == '@') {
             t_entity = player_tex;
+          } else if (c == 'k') {
+            t_entity = chicken_tex;
           } else {
             if (c == 'c') {
               t_entity = cyclop_tex;
@@ -1380,20 +1506,69 @@ int main() {
         } else if (tile.terrain_id == DOOR_ID) {
           t_terrain = door_tex;
         }
-        DrawTexture(t_terrain, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, RED);
+        Color color = RED;
+        if (is_mouse_inside_tile(mouse_pos, tile_coord, cell_width,
+                                 cell_height)) {
+          color = YELLOW;
+        }
+        DrawTexture(t_terrain, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, color);
         if(has_entity){
-          DrawTexture(t_entity, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, RED);
+          DrawTexture(t_entity, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, WHITE);
         }
       }
       free(affected_tiles.items);
     }
     // spells
+
     DrawText(TextFormat("Spells Available", t), text_x, text_y, font_size, WHITE);
     text_y += font_size + 2;
-    DrawText(TextFormat("1 - Move Earth", t), text_x, text_y , font_size, RAYWHITE);
+    Color color = RAYWHITE;
+    if (selected_spell_id == SPELL_ID_MOVE_TERRAIN){
+      color = YELLOW; 
+    }
+    DrawText(TextFormat("1 - Move Earth", t), text_x, text_y , font_size, color);
+    color = RAYWHITE;
     text_y += font_size + 2;
-    DrawText(TextFormat("2 - Rotate Earth", t), text_x, text_y, font_size, RAYWHITE);
+    if (selected_spell_id == SPELL_ID_ROTATE_TERRAIN){
+      color = YELLOW; 
+    }
+    DrawText(TextFormat("2 - Rotate Earth", t), text_x, text_y, font_size, color);
     text_y += font_size + 2;
+    color = RAYWHITE;
+    if (selected_spell_id == SPELL_ID_CREATE_TERRAIN){
+      color = YELLOW; 
+    }
+    DrawText(TextFormat("3 - Create Earth", t), text_x, text_y, font_size, color);
+    text_y += font_size + 2;
+    color = RAYWHITE;
+
+    if(selected_spell_id == SPELL_ID_ROTATE_TERRAIN && targets.size == 1){
+        Vec2 coord = targets.items[0]; 
+        Tile tile = map.cells[coord_to_idx(coord)];
+        Vec2 tile_coord = (Vec2){.x = cell_width * coord.x, .y = cell_height * coord.y};
+
+        float rotation = 0;
+        Vec2 mouse_coord = get_tile_coord_under_pixel_coord(mouse_pos);
+        int x_dir = coord.x < mouse_coord.x ? 1 : -1;
+        if(x_dir == -1){
+          rotation = 180;
+          // it rotates around the top left corner, need to offset to the rigth and down by cell size
+          DrawTextureEx(right_arrow_tex, 
+                      (Vector2){tile_coord.x + X_OFFSET + cell_width, tile_coord.y + Y_OFFSET + cell_height},
+                      rotation,
+                      1,
+                      WHITE);
+        } else {
+          DrawTextureEx(right_arrow_tex, 
+                      (Vector2){tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET},
+                      rotation,
+                      1,
+                      WHITE);
+
+        }
+
+    }
+
     free(enemy_coords.items);
 
     // DrawFPS(5, 5);
