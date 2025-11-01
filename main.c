@@ -40,6 +40,9 @@
 #define CYCLOPS_ENEMY_TYPE 4
 #define DRAGON_ENEMY_TYPE 5
 
+// #define EMPTY_ENTITY_IDX RAND_MAX
+#define EMPTY_ENTITY_IDX 100
+
 // order of precendence
 // 1: ++ -- 	Prefix increment and decrement[note 1] 	Right-to-left
 // + - 	Unary plus and minus
@@ -69,16 +72,16 @@ typedef unsigned int uint;
 
 typedef enum Directions{
   North,
+  East,
   South,
   West,
-  East
 }Directions;
 
 const Vec2 DIRECTIONS[4] = {
-  {0, 1},
   {0, -1},
-  {-1, 0},
   {1, 0},
+  {0, 1},
+  {-1, 0},
 };
 
 typedef struct Tile {
@@ -129,14 +132,17 @@ bool is_inside_map(Map map, Vec2 new_coord) {
 }
 
 bool is_valid_to_move(Map map, Vec2 new_coord) {
-  return map.cells[coord_to_idx(new_coord)].entity_idx == 0 &&
+  return map.cells[coord_to_idx(new_coord)].entity_idx == RAND_MAX &&
          map.cells[coord_to_idx(new_coord)].terrain_id == FLOOR_ID;
+}
+
+bool are_coords_equal(Vec2 c1, Vec2 c2) {
+  return c1.x == c2.x && c1.y == c2.y;
 }
 
 void get_atk_coords_from_entity(Map map, Entity en, int x, int y, Vec2_Arr* result){
   switch(en.type) {
     case CYCLOPS_ENEMY_TYPE: {
-      break;
       // get a line on entities dir
       int total_tiles;
       if (en.dir == North) {
@@ -172,14 +178,11 @@ void get_atk_coords_from_entity(Map map, Entity en, int x, int y, Vec2_Arr* resu
           result->items[count] = (Vec2){.x = x+i, .y = y+j};
           count++;
           result->size=count;
-          break;
         }
-        break;
       }
       break;
     }
     case DRAGON_ENEMY_TYPE: {
-      break;
       // cone - for now very simplified version, rectangle!
       int height, width, center_x, center_y;
       Vec2 en_dir = DIRECTIONS[en.dir];
@@ -190,7 +193,7 @@ void get_atk_coords_from_entity(Map map, Entity en, int x, int y, Vec2_Arr* resu
         height = 3;
         width = 5;
       }
-      center_x = x + en_dir.y*3;
+      center_x = x + en_dir.x*3;
       center_y = y + en_dir.y*3;
       result->cap = width*height;
       result->items = (Vec2*)malloc(sizeof(Vec2)*width*height);
@@ -1000,6 +1003,7 @@ void init_map(Map *map, uint width, uint height) {
     for (uint i = 0; i < width; i++) {
       cells[j * width + i] = (Tile){0};
       cells[j * width + i].terrain_id = FLOOR_ID;
+      cells[j * width + i].entity_idx = EMPTY_ENTITY_IDX;
     }
   }
   map->cells = cells;
@@ -1028,24 +1032,24 @@ void swap_in_sequence(Map *map, Vec2 origin_coord, Vec2 *sequence, int size) {
     Vec2 current_coord = {origin_coord.x + sequence[i % size].x,
                           origin_coord.y + sequence[i % size].y};
     if (is_first_pass) {
-      t1.terrain_id = map->cells[coord_to_idx(current_coord)].entity_idx;
-      t1.item_idx = map->cells[coord_to_idx(current_coord)].item_idx;
+      // first tile, just save it
+      t1.entity_idx = map->cells[coord_to_idx(current_coord)].entity_idx;
       t1.terrain_id = map->cells[coord_to_idx(current_coord)].terrain_id;
       is_first_pass = false;
     } else {
-      t2.terrain_id = map->cells[coord_to_idx(current_coord)].entity_idx;
-      t2.item_idx = map->cells[coord_to_idx(current_coord)].item_idx;
+      // save the current tile into t2
+      t2.entity_idx = map->cells[coord_to_idx(current_coord)].entity_idx;
       t2.terrain_id = map->cells[coord_to_idx(current_coord)].terrain_id;
+      // replace currect tile to the previous one
       map->cells[coord_to_idx(current_coord)].entity_idx = t1.entity_idx;
-      map->cells[coord_to_idx(current_coord)].item_idx = t1.item_idx;
       map->cells[coord_to_idx(current_coord)].terrain_id = t1.terrain_id;
-      t1.terrain_id = t2.entity_idx;
-      t1.item_idx = t2.item_idx;
+      // save the "old" current tile  into t1
+      t1.entity_idx = t2.entity_idx;
       t1.terrain_id = t2.terrain_id;
     }
   }
 }
-bool rotate_terrain(Map *map, Vec2 origin_coord, Vec2 rotation_dir) {
+bool rotate_terrain(Map *map, Vec2 origin_coord, Vec2 rotation_dir, Entity_arr* entities) {
   // for now size is fixed 2x2, 3x3 is interesting too
   int size = 3;
   int x_dir = origin_coord.x < rotation_dir.x ? 1 : -1;
@@ -1071,10 +1075,22 @@ bool rotate_terrain(Map *map, Vec2 origin_coord, Vec2 rotation_dir) {
       Vec2 sequence[8] = {{0, 0}, {1, 0}, {2, 0}, {2, 1},
                           {2, 2}, {1, 2}, {0, 2}, {0, 1}};
       swap_in_sequence(map, origin_coord, sequence, seq_size);
+      Vec2 middle_coord = (Vec2){.x = origin_coord.x + 1, .y = origin_coord.y + 1}; 
+      if(is_inside_map(*map, middle_coord)){
+        int en_idx = map->cells[coord_to_idx(middle_coord)].entity_idx;
+        entities->items[en_idx].dir = (entities->items[en_idx].dir + 1)%4;
+      }
     } else {
       Vec2 sequence[8] = {{0, 0}, {0, 1}, {0, 2}, {1, 2},
                           {2, 2}, {2, 1}, {2, 0}, {1, 0}};
       swap_in_sequence(map, origin_coord, sequence, seq_size);
+      Vec2 middle_coord = (Vec2){.x = origin_coord.x + 1, .y = origin_coord.y + 1}; 
+      if(is_inside_map(*map, middle_coord)){
+        int en_idx = map->cells[coord_to_idx(origin_coord)].entity_idx;
+        if (en_idx != EMPTY_ENTITY_IDX){
+          entities->items[en_idx].dir = (entities->items[en_idx].dir - 1)%4;
+        }
+      }
     }
   }
   return true;
@@ -1083,21 +1099,54 @@ bool rotate_terrain(Map *map, Vec2 origin_coord, Vec2 rotation_dir) {
 bool move_terrain(Map *map, Vec2 origin_coord, Vec2 target_coord) {
   printf("moving terrain: from(%d,%d) to(%d,%d)\n", origin_coord.x,
          origin_coord.y, target_coord.x, target_coord.y);
-  // Vec2_Arr tiles = {0};
-  // tiles.cap = 100;
-  // tiles.items = (Vec2*)malloc(sizeof(
-  // rg_bresenham_line(origin_coord, target_coord, &tiles);
-  if (is_inside_map(*map, target_coord) &&
-      is_valid_to_move(*map, target_coord)) {
+  // does it make sense to move an empty terrain? what would it do?
 
-    map->cells[coord_to_idx(target_coord)].terrain_id =
-        map->cells[coord_to_idx(origin_coord)].terrain_id;
-    map->cells[coord_to_idx(origin_coord)].terrain_id = 0;
-    origin_coord.x = target_coord.x;
-    origin_coord.y = target_coord.y;
-    return true;
+  int t_id = map->cells[coord_to_idx(origin_coord)].terrain_id;
+  int en_id = map->cells[coord_to_idx(origin_coord)].entity_idx;
+  if(t_id == FLOOR_ID){
+    printf("no behavior for moving an empty floor at (%d, %d)", origin_coord.x, origin_coord.y);
+    return false;
+  }
+  Vec2_Arr tiles = {0};
+  tiles.cap = 50;
+  tiles.items = (Vec2*)malloc(sizeof(Vec2)*tiles.cap);
+  rg_bresenham_line(origin_coord, target_coord, &tiles);
+  // start with i=1 to skip first tile
+  if(tiles.size == 1){
+    printf("unable to move terrain to same tile");
+    return false;
+  }
+  for(int i = 1; i < tiles.size; i++){
+      Vec2 curr_coord = tiles.items[i];
+      int curr_t_id = map->cells[coord_to_idx(curr_coord)].terrain_id;
+      int curr_en_id = map->cells[coord_to_idx(curr_coord)].entity_idx;
+      if(curr_t_id == FLOOR_ID && curr_en_id == EMPTY_ENTITY_IDX && i != tiles.size - 1){
+        // if the terrain is clear of other terrain or entities, and we are not at the end of the path
+        continue;
+      } 
+      Vec2 prev_coord = tiles.items[i-1]; 
+      map->cells[coord_to_idx(prev_coord)].terrain_id = t_id;
+      map->cells[coord_to_idx(prev_coord)].entity_idx = en_id;
+      if(are_coords_equal(prev_coord, origin_coord)){
+        break; 
+      }
+      map->cells[coord_to_idx(origin_coord)].terrain_id = FLOOR_ID;
+      map->cells[coord_to_idx(origin_coord)].entity_idx = EMPTY_ENTITY_IDX;
+      return true;
   }
   return false;
+  // if (is_inside_map(*map, target_coord) &&
+  //   is_valid_to_move(*map, target_coord)) {
+  //   // what about entities? should they be there?
+  //
+  //   map->cells[coord_to_idx(target_coord)].terrain_id = map->cells[coord_to_idx(origin_coord)].terrain_id;
+  //   // it's not swaping, it's removing what was previously there
+  //   map->cells[coord_to_idx(origin_coord)].terrain_id = 0;
+  //   origin_coord.x = target_coord.x;
+  //   origin_coord.y = target_coord.y;
+  //   return true;
+  // }
+  // return false;
 }
 
 bool is_mouse_inside_grid(Vector2 mouse_coord) {
@@ -1130,7 +1179,7 @@ void tile_clicked(Map map, Vec2_Arr *targets) {
   printf("selecting: (%d, %d)\n", coord.x, coord.y);
 }
 
-int handle_input(int key, Map *map, Vec2 *player_coord, Vec2_Arr *targets) {
+int handle_input(int key, Map *map, Vec2 *player_coord, Vec2_Arr *targets, Entity_arr* entities) {
   if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
     tile_clicked(*map, targets);
   if (IsKeyPressed(KEY_UP))
@@ -1144,7 +1193,7 @@ int handle_input(int key, Map *map, Vec2 *player_coord, Vec2_Arr *targets) {
   if (IsKeyPressed(KEY_ONE) && targets->size == 2)
     move_terrain(map, targets->items[0], targets->items[1]);
   if (IsKeyPressed(KEY_TWO) && targets->size == 2)
-    rotate_terrain(map, targets->items[0], targets->items[1]);
+    rotate_terrain(map, targets->items[0], targets->items[1], entities);
   if (IsKeyPressed(KEY_N)) {
     init_map(map, map->width, map->height);
     map_generator_random(map);
@@ -1187,27 +1236,27 @@ int main() {
   entities.cap = 2+num_of_monsters+num_of_neutrals;
   entities.items = (Entity *)malloc(sizeof(Entity) * entities.cap);
 
-  entities.items[1] = (Entity){.character = '@', .HP = 5, .teamID = PLAYER_TEAM, .type = PLAYER_TYPE };
+  entities.items[0] = (Entity){.character = '@', .HP = 5, .teamID = PLAYER_TEAM, .type = PLAYER_TYPE };
   Vec2 player_coord = (Vec2){.x = 0, .y = 0};
 
-  entities.items[2] = (Entity){.character = 'c', .HP = 5, .teamID = ENEMY_TEAM, .type = CYCLOPS_ENEMY_TYPE, .dir = North};
-  entities.items[3] = (Entity){.character = 'b', .HP = 3, .teamID = ENEMY_TEAM, .type = BOMBY_ENEMY_TYPE, .dir = North};
-  entities.items[4] = (Entity){.character = 'd', .HP = 10, .teamID = ENEMY_TEAM, .type = DRAGON_ENEMY_TYPE, .dir = East };
-  entities.items[5] = (Entity){.character = 'c', .HP = 5, .teamID = ENEMY_TEAM, .type = CYCLOPS_ENEMY_TYPE, .dir = South };
-  entities.size = 6;
+  entities.items[1] = (Entity){.character = 'c', .HP = 5, .teamID = ENEMY_TEAM, .type = CYCLOPS_ENEMY_TYPE, .dir = North};
+  entities.items[2] = (Entity){.character = 'b', .HP = 3, .teamID = ENEMY_TEAM, .type = BOMBY_ENEMY_TYPE, .dir = North};
+  entities.items[3] = (Entity){.character = 'd', .HP = 10, .teamID = ENEMY_TEAM, .type = DRAGON_ENEMY_TYPE, .dir = East };
+  entities.items[4] = (Entity){.character = 'c', .HP = 5, .teamID = ENEMY_TEAM, .type = CYCLOPS_ENEMY_TYPE, .dir = South };
+  entities.size = 5;
 
   t = time(NULL);
   srand(t);
   init_map(&map, COLS, ROWS);
   map_generator_random(&map);
   // add "player"
-  map.cells[0] = (Tile){.entity_idx=1, .item_idx=0, .terrain_id=0};
+  map.cells[0] = (Tile){.entity_idx=0, .item_idx=0, .terrain_id=0};
   // add monster
   // (10, 8), (10, 3), (3, 5), (17, 5)
-  map.cells[8*COLS + 10].entity_idx = 2;
-  map.cells[3*COLS + 10].entity_idx = 3;
-  map.cells[5*COLS + 3].entity_idx = 4;
-  map.cells[5*COLS + 17].entity_idx = 5;
+  map.cells[8*COLS + 10].entity_idx = 1;
+  map.cells[3*COLS + 10].entity_idx = 2;
+  map.cells[5*COLS + 3].entity_idx = 3;
+  map.cells[5*COLS + 17].entity_idx = 4;
 
   float font_size = 40;
   Texture2D floor_tex = img_file_to_texture("floor.png", cell_width, cell_height);
@@ -1226,7 +1275,7 @@ int main() {
   targets.items = (Vec2 *)malloc(sizeof(Vec2) * 2);
   while (!WindowShouldClose()) {
     int key = GetKeyPressed();
-    handle_input(key, &map, &player_coord, &targets);
+    handle_input(key, &map, &player_coord, &targets, &entities);
     Vector2 mouse_pos = GetMousePosition();
 
     BeginDrawing();
@@ -1244,7 +1293,7 @@ int main() {
         Texture2D t_entity;
         Texture2D t_terrain;
         bool has_entity = false;
-        if (tile.entity_idx != 0 && tile.entity_idx < entities.size) {
+        if (tile.entity_idx != EMPTY_ENTITY_IDX && tile.entity_idx < entities.size) {
           has_entity = true;
           Entity en = entities.items[tile.entity_idx];
           c = en.character;
@@ -1286,59 +1335,57 @@ int main() {
         if (has_entity) 
           DrawTexture(t_entity, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, color);
       }
-      for(int i = 0; i < enemy_coords.size; i++){
-        int x = enemy_coords.items[i].x;
-        int y = enemy_coords.items[i].y;
-        int entity_idx = map.cells[y*COLS + x].entity_idx;
-        Entity entity = entities.items[entity_idx];
-        Vec2_Arr* affected_tiles = {0};
-        get_atk_coords_from_entity(map, entity, x, y, affected_tiles);
-        for(int j = 0; j < affected_tiles->size; j++){
-          Vec2 coord = affected_tiles->items[j];
-          if(!is_inside_map(map, coord)){
-            continue;
-          }
-          Tile tile = map.cells[coord.y * COLS + coord.x];
-          Vec2 tile_coord = (Vec2){.x = cell_width * coord.x, .y = cell_height * coord.y};
-          Texture2D t_terrain;
-          Texture2D t_entity;
-          bool has_entity;
-
-          if (tile.entity_idx != 0 && tile.entity_idx < entities.size) {
-
-            has_entity = true;
-            Entity en = entities.items[tile.entity_idx];
-            char c = en.character;
-
-            if (c == '@') {
-              t_entity = player_tex;
-            } else {
-              if (c == 'c') {
-                t_entity = cyclop_tex;
-              } else if(  c == 'b' ) {
-                t_entity = bomb_tex;
-              } else if(c == 'd'){
-                t_entity = dragon_tex;
-              }
-            }
-          } 
-          if (tile.terrain_id == FLOOR_ID) {
-            t_terrain = floor_tex;
-          } else if (tile.terrain_id == WALL_ID) {
-            t_terrain = pillar_tex;
-          } else if (tile.terrain_id == STONE_ID) {
-            t_terrain = stone_tex;
-          } else if (tile.terrain_id == DOOR_ID) {
-            t_terrain = door_tex;
-          }
-          DrawTexture(t_terrain, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, RED);
-          if(has_entity){
-            DrawTexture(t_entity, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, RED);
-          }
+    }
+    for(int i = 0; i < enemy_coords.size; i++){
+      int x = enemy_coords.items[i].x;
+      int y = enemy_coords.items[i].y;
+      int entity_idx = map.cells[y*COLS + x].entity_idx;
+      Entity entity = entities.items[entity_idx];
+      Vec2_Arr affected_tiles = {0};
+      get_atk_coords_from_entity(map, entity, x, y, &affected_tiles);
+      for(int j = 0; j < affected_tiles.size; j++){
+        Vec2 coord = affected_tiles.items[j];
+        if(!is_inside_map(map, coord)){
+          continue;
         }
-        free(affected_tiles->items);
-        free(affected_tiles);
+        Tile tile = map.cells[coord.y * COLS + coord.x];
+        Vec2 tile_coord = (Vec2){.x = cell_width * coord.x, .y = cell_height * coord.y};
+        Texture2D t_terrain;
+        Texture2D t_entity;
+        bool has_entity = false;
+
+        if (tile.entity_idx != EMPTY_ENTITY_IDX && tile.entity_idx < entities.size) {
+          has_entity = true;
+          Entity en = entities.items[tile.entity_idx];
+          char c = en.character;
+
+          if (c == '@') {
+            t_entity = player_tex;
+          } else {
+            if (c == 'c') {
+              t_entity = cyclop_tex;
+            } else if(  c == 'b' ) {
+              t_entity = bomb_tex;
+            } else if(c == 'd'){
+              t_entity = dragon_tex;
+            }
+          }
+        } 
+        if (tile.terrain_id == FLOOR_ID) {
+          t_terrain = floor_tex;
+        } else if (tile.terrain_id == WALL_ID) {
+          t_terrain = pillar_tex;
+        } else if (tile.terrain_id == STONE_ID) {
+          t_terrain = stone_tex;
+        } else if (tile.terrain_id == DOOR_ID) {
+          t_terrain = door_tex;
+        }
+        DrawTexture(t_terrain, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, RED);
+        if(has_entity){
+          DrawTexture(t_entity, tile_coord.x + X_OFFSET, tile_coord.y + Y_OFFSET, RED);
+        }
       }
+      free(affected_tiles.items);
     }
     // spells
     DrawText(TextFormat("Spells Available", t), text_x, text_y, font_size, WHITE);
